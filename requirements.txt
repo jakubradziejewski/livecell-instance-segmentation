@@ -11,3 +11,11 @@ Pillow==11.0.0
 # Training essentials
 tqdm==4.67.1
 PyYAML==6.0.2
+
+# Experiment tracking (W&B)
+wandb==0.24.0
+python-dotenv==1.0.1
+
+# Data versioning (DVC)
+dvc==3.58.0
+dvc-gdrive==3.0.1
