@@ -1,0 +1,26 @@
+services:
+  training:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: livecell-instance-segmentation:latest
+    container_name: livecell_train
+
+    volumes:
+      - ./:/workspace
+      - ./data:/workspace/data
+      - ./models:/workspace/models
+      - ./experiments:/workspace/experiments
+
+    gpus: all
+
+    environment:
+      - CUDA_VISIBLE_DEVICES=0
+      - PYTHONPATH=/workspace
+      - PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:128
+
+    shm_size: '2gb'
+    stdin_open: true
+    tty: true
+
+    command: bash
