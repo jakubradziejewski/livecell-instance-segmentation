@@ -10,8 +10,12 @@ LIVECell: https://sartorius-research.github.io/LIVECell/
 
 ### Prerequisites
 
-- Docker Desktop installed and running
-- NVIDIA GPU with drivers
+- Docker and Docker Compose
+- NVIDIA GPU with drivers  
+- NVIDIA Container Toolkit
+
+Note: This guide uses `docker compose` (V2). If you have the older 
+standalone version, use `docker-compose` (with hyphen) instead.
 
 ### Setup & Run
 ```bash
@@ -20,26 +24,26 @@ git clone https://github.com/jakubradziejewski/livecell-instance-segmentation.gi
 cd livecell-instance-segmentation
 
 # 2. Build Docker image (first time: ~15-20 minutes)
-docker-compose build
+docker compose build
 
 # 3. Download dataset
 # Download from: https://sartorius-research.github.io/LIVECell/
 # Place in: data/raw/
 
 # Start a container
-docker-compose up -d
+docker compose up -d
 
 # Attach to running container
-docker-compose exec training bash
+docker compose exec training bash
 
 # 4. Run training
-docker-compose run --rm training python train.py
+docker compose run --rm training python train.py
 ```
 
 ### Development
 ```bash
 # Start interactive session
-docker-compose run --rm training bash
+docker compose run --rm training bash
 
 # Inside container, you can:
 python scripts/preprocess.py
@@ -50,13 +54,13 @@ python evaluate.py
 ### Useful Commands
 ```bash
 # Check GPU is available
-docker-compose run --rm training nvidia-smi
+docker compose run --rm training nvidia-smi
 
 # Test PyTorch + CUDA
-docker-compose run --rm training python -c "import torch; print(torch.cuda.is_available())"
+docker compose run --rm training python -c "import torch; print(torch.cuda.is_available())"
 
-docker-compose build                    # Build image
-docker-compose build --no-cache        # Rebuild from scratch (if issues)
+docker compose build                    # Build image
+docker compose build --no-cache        # Rebuild from scratch (if issues)
 
 
 # Adding Libraries
