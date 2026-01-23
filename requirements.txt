@@ -1,4 +1,4 @@
-# Core Deep Learning - Your version
+# Core Deep Learning
 torch==2.7.1+cu118
 torchvision==0.22.1+cu118
 --extra-index-url https://download.pytorch.org/whl/cu118
@@ -19,3 +19,14 @@ python-dotenv==1.0.1
 # Data versioning (DVC)
 dvc==3.58.0
 dvc-gdrive==3.0.1
+
+# Data download and processing
+requests==2.32.3
+
+# COCO format handling (for instance segmentation)
+pycocotools==2.0.8
+
+# Metrics and evaluation
+scikit-learn==1.5.2
+matplotlib==3.9.3
+seaborn==0.13.2

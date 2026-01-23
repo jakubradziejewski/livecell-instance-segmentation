@@ -5,15 +5,16 @@ services:
       dockerfile: Dockerfile
     image: livecell-instance-segmentation:latest
     container_name: livecell_training 
-
     volumes:
       - ./:/workspace
       - ./data:/workspace/data
       - ./models:/workspace/models
       - ./experiments:/workspace/experiments
-
-    gpus: all
-
+      # Add cache volumes for faster rebuilds
+      - pip-cache:/root/.cache/pip
+      - wandb-cache:/root/.cache/wandb
+    runtime: nvidia
+    
     env_file:
       - .env
     
@@ -24,10 +25,13 @@ services:
       - WANDB_API_KEY=${WANDB_API_KEY}
       - WANDB_ENTITY=${WANDB_ENTITY}
       - WANDB_PROJECT=${WANDB_PROJECT}
-
-    shm_size: '2gb'
+    
+    shm_size: '8gb'  # Increased for larger batch sizes with DataLoader workers
     stdin_open: true
     tty: true
+    command: tail -f /dev/null
 
-    # Don't auto-start, just keep running
-    command: tail -f /dev/null  # Keeps container alive
+# Define named volumes for caching
+volumes:
+  pip-cache:
+  wandb-cache:
