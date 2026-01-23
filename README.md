@@ -16,7 +16,7 @@ LIVECell: https://sartorius-research.github.io/LIVECell/
 ### Setup & Run
 ```bash
 # 1. Clone repository
-git clone https://github.com/yourusername/livecell-instance-segmentation.git
+git clone https://github.com/jakubradziejewski/livecell-instance-segmentation.git
 cd livecell-instance-segmentation
 
 # 2. Build Docker image (first time: ~15-20 minutes)
