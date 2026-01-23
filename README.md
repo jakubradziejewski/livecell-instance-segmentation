@@ -59,8 +59,9 @@ cd livecell-instance-segmentation
 docker compose build
 
 # 3. Download dataset
-# Download from: https://sartorius-research.github.io/LIVECell/
-# Place in: data/raw/
+docker compose run --rm training python scripts/download_data.py
+# Or download from: https://sartorius-research.github.io/LIVECell/
+# And place in: data/raw/
 
 # Start a container
 docker compose up -d
