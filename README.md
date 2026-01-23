@@ -26,6 +26,12 @@ docker-compose build
 # Download from: https://sartorius-research.github.io/LIVECell/
 # Place in: data/raw/
 
+# Start a container
+docker-compose up -d
+
+# Attach to running container
+docker-compose exec training bash
+
 # 4. Run training
 docker-compose run --rm training python train.py
 ```

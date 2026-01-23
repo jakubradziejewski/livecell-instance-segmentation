@@ -1,0 +1,64 @@
+# .dockerignore - Exclude from Docker build context
+
+# Wandb runs (causes Windows file access issues!)
+wandb/
+*.wandb
+
+# Data (huge files, no need in image)
+data/
+*.zip
+*.tar.gz
+*.h5
+*.pkl
+*.csv
+
+# Models (large files)
+models/*.pth
+models/*.pt
+experiments/
+mlruns/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.pytest_cache/
+.ipynb_checkpoints/
+
+# Git
+.git/
+.gitignore
+.gitattributes
+
+# Environment
+.env
+.env.*
+*.env
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs
+*.log
+logs/
+
+# Documentation
+docs/
+*.md
+!README.md
+
+# Test files
+tests/
+*.test.py
+
+# Jupyter
+*.ipynb

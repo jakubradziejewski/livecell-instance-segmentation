@@ -4,7 +4,7 @@ services:
       context: .
       dockerfile: Dockerfile
     image: livecell-instance-segmentation:latest
-    container_name: livecell_train
+    container_name: livecell_training 
 
     volumes:
       - ./:/workspace
@@ -16,14 +16,18 @@ services:
 
     env_file:
       - .env
-
+    
     environment:
       - CUDA_VISIBLE_DEVICES=0
       - PYTHONPATH=/workspace
       - PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:128
+      - WANDB_API_KEY=${WANDB_API_KEY}
+      - WANDB_ENTITY=${WANDB_ENTITY}
+      - WANDB_PROJECT=${WANDB_PROJECT}
 
     shm_size: '2gb'
     stdin_open: true
     tty: true
 
-    command: bash
+    # Don't auto-start, just keep running
+    command: tail -f /dev/null  # Keeps container alive
