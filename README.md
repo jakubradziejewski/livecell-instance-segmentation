@@ -17,6 +17,38 @@ LIVECell: https://sartorius-research.github.io/LIVECell/
 Note: This guide uses `docker compose` (V2). If you have the older 
 standalone version, use `docker-compose` (with hyphen) instead.
 
+### Installing NVIDIA Container Toolkit
+```bash
+# 1. Configure the repository
+curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg \
+  && curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list | \
+    sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' | \
+    sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
+
+# 2. Update package list
+sudo apt-get update
+
+# 3. Install the toolkit
+sudo apt-get install -y nvidia-container-toolkit
+
+# 4. Configure Docker to use NVIDIA runtime
+sudo nvidia-ctk runtime configure --runtime=docker
+
+# 5. Restart Docker
+sudo systemctl restart docker
+
+# 6. Verify nvidia runtime is available
+docker info | grep -i runtime
+# After step 6, you should see: Runtimes: io.containerd.runc.v2 nvidia runc
+
+# Check GPU is available
+docker compose run --rm training nvidia-smi
+
+# Test PyTorch + CUDA
+docker compose run --rm training python -c "import torch; print(torch.cuda.is_available())"
+```
+
+
 ### Setup & Run
 ```bash
 # 1. Clone repository
@@ -53,12 +85,6 @@ python evaluate.py
 
 ### Useful Commands
 ```bash
-# Check GPU is available
-docker compose run --rm training nvidia-smi
-
-# Test PyTorch + CUDA
-docker compose run --rm training python -c "import torch; print(torch.cuda.is_available())"
-
 docker compose build                    # Build image
 docker compose build --no-cache        # Rebuild from scratch (if issues)
 
