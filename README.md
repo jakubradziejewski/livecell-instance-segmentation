@@ -22,18 +22,14 @@ cd livecell-instance-segmentation
 # 2. Build Docker image (first time: ~15-20 minutes)
 docker-compose build
 
-# 3. Download dataset
-# Download from: https://sartorius-research.github.io/LIVECell/
-# Place in: data/raw/
-
 # Start a container
 docker-compose up -d
 
 # Attach to running container
 docker-compose exec training bash
 
-# 4. Run training
-docker-compose run --rm training python train.py
+# Download data
+python scripts/download_data.py
 ```
 
 ### Development

@@ -1,0 +1,13 @@
+{
+  "type": "service_account",
+  "project_id": "livecell-dvc-storage",
+  "private_key_id": "2cf374ba8dab7741f57904bfc784d408bb833091",
+  "private_key": "-----BEGIN PRIVATE KEY-----\nMIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQDT3ObCivSC0LC+\njN5i2OzwKcVpNkGwOvCvQOcWSw8XHtIzyomLK1AGcrph9DTUH9KA2R3Wfv4T3LXL\nMy5p9DKhRI6GDLJRBRa3I85fsLfnD8uuN3R9hpVHtE+gEp1XHd9WGY6hQF+iK6cC\nVNfzOSqKZuACuop6DCEHG/GBVMpiajOzJGCkgmMsQAOoV3uNJoeaE29KuqXDY7ST\nn4H1uFzEBVcyh/4R5443hxYk236aUEjcQ5lcOgoglViiipjepOGvOhdSLwxAIMdC\nGuak7VB4w4i+GyuPQWMdT65/eEOXLyNSaCu9O1J7tZNekNjiCR+jo34E+ErEmsYn\nZbeoAT5dAgMBAAECggEARrlPyTKkxASRc9LHrBy5H8T58xDbJc7PKNnUKqN80p2F\n0ycx+iTHzpc+89MXTZaf6UZRSRjUjWHYyA/6VwFfY2lk4IfdgOFff1xzGIuAIKCr\nwCkf+IVUUP72s7tzDbFZrD7U16yLIDJNSqBzBG0Zb+E+t3p5Hpvs7Jgd6ywYcXhh\nvUcfOBULnt56gsMZHL/vwARpzg/PBr3YYuss0DIVOl4wYAbQL5vZkT+Y3/8FOO1q\nBwxVYdyIl/yUZXvdqIzm2UO32y46apovOlZcsLyXiG2FKzrAUfn41krhunm0bP05\naWqwr7k+qroi8skbgLzVRibHd6xQscB8koiJC/6lmwKBgQD1bkGAG8gAjSE6sDYR\nvjI5xkuT0wwAqlYZwnLg0mi0EAP+7ViQWTVJP2CemfIGEIgpXAwz4VF2O6/K6pmk\nHxhE4BfRgd+NPuBmaEJBGUJO0u8aoqf5Z7L/ClSZCBp+UikM7Nj/i6fmU4imz1XF\nMrIgeh0bq/y2PX6fY++DgbU/qwKBgQDc/JQMwfIGCkaYUr7tzycVL8UxAYNZJ4eI\neMxCRPXJT1yIKvu9kVUAGVD4pnbmEiZPId/gLhJLTbMHHX1j4mhKzYwriIVN7kI8\nKRx/YsGU1EpB5t1CBmQEG1zElMjhsLqJrC6+u5iaCHd3bx2D9nsr/axBNx1/o8hM\n5gbZ4juSFwKBgQDbu6nS+4x1yeUNOUQ/YGxxQ3LY12PwmJBbobbeSCNLyub47yCS\no/vMJ3zmomeIPHbbqLiYHkujsk5yOtXxlZFR4NwSS9eNCtU3enKO/AFctwcxbp06\n8zfTlTkmhZXKsN5l3wtsx2k8El/PEOP2mKvX3dx/sNyhgK8EHyIKOC/A3wKBgG3o\nhW3O7COK6s+JoAJA3ExSRP35pa0q1uLOSbDQAXqNKRVkY25GIQN6k+YHTO1iq4EB\n9QnXgCvJyjfIt/t8uKgzkPp53OsEjBbFz7GfmW3/I6uhOfxDl2zfewUehsaREkW0\nyE7+mIhLm7dgIUrnxRz8/rY0xkwcVlvAsDmfpkcjAoGBAL0P7BU8wZ7VTKA/fFpl\nugFwpKvPJPdSmgB6X8TtpU1ruPjlaNpDK8IMHxXJQLKROT5n8PM9OR9P6cKVVpu1\nlTmkEo4B7a09UT1QDxks0LOBUodWXx699VEM6OzcviYaCgtpGBZKjdxsfMBPk+OM\na4aJvzxWq0r89EXXGSuCsBbS\n-----END PRIVATE KEY-----\n",
+  "client_email": "cellproject@livecell-dvc-storage.iam.gserviceaccount.com",
+  "client_id": "106204061218447970606",
+  "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+  "token_uri": "https://oauth2.googleapis.com/token",
+  "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+  "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/cellproject%40livecell-dvc-storage.iam.gserviceaccount.com",
+  "universe_domain": "googleapis.com"
+}
