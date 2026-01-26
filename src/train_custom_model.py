@@ -243,17 +243,15 @@ def main():
     """
     Main training script for custom architecture.
     """
-    print("=" * 80)
     print("Custom Mask R-CNN Training (with proper evaluation)")
     print("Architecture: ResNet-18 Backbone + Custom FPN/RPN/Heads (>50% own layers)")
-    print("=" * 80)
     
     # Configuration
     data_dir = 'data_split'
     batch_size = 2
     num_workers = 2
     lr = 0.005
-    num_epochs = 5  # Train for more epochs to see improvement
+    num_epochs = 5
     num_classes = 2
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     
@@ -263,7 +261,6 @@ def main():
     print(f"  Learning rate: {lr}")
     print(f"  Epochs: {num_epochs}")
     print(f"  Num classes: {num_classes}")
-    print()
     
     # Load data
     print("Loading datasets...")
@@ -282,7 +279,6 @@ def main():
     print(f"  Train: {len(train_loader.dataset)} images, {len(train_loader)} batches")
     print(f"  Val:   {len(val_loader.dataset)} images, {len(val_loader)} batches")
     print(f"  Test:  {len(test_loader.dataset)} images, {len(test_loader)} batches")
-    print()
     
     # Create custom model
     print("Creating custom model...")
@@ -293,13 +289,12 @@ def main():
     # Count parameters
     param_info = model.count_parameters()
     
-    print(f"✓ Custom model created")
+    print(f"Custom model created")
     print(f"  Total parameters:      {param_info['total']:,}")
     print(f"  Backbone (borrowed):   {param_info['backbone']:,} ({100-param_info['custom_percentage']:.1f}%)")
     print(f"  Custom layers (yours): {param_info['custom']:,} ({param_info['custom_percentage']:.1f}%)")
-    print(f"  ✓ Custom >50%: {param_info['custom_percentage'] > 50}")
+    print(f"  Custom >50%: {param_info['custom_percentage'] > 50}")
     print(f"  Model size: ~{param_info['total'] * 4 / (1024**2):.1f} MB")
-    print()
     
     # Optimizer
     optimizer = torch.optim.AdamW(
@@ -313,7 +308,7 @@ def main():
     
     # Training loop
     print("Starting training...")
-    print("=" * 80)
+
     
     train_losses = []
     val_metrics_history = []
@@ -337,7 +332,7 @@ def main():
         val_metrics = evaluate(model, val_loader, device, iou_threshold=0.5)
         val_metrics_history.append(val_metrics)
         
-        print(f"Validation Metrics (IoU threshold: 0.5):")
+        print(f"Validation Metrics:")
         print(f"  Mean IoU:        {val_metrics['mean_iou']:.4f}")
         print(f"  Mean Precision:  {val_metrics['mean_precision']:.4f}")
         print(f"  Mean Recall:     {val_metrics['mean_recall']:.4f}")
@@ -349,11 +344,9 @@ def main():
         # Step scheduler
         scheduler.step()
         print(f"  Learning rate: {scheduler.get_last_lr()[0]:.6f}")
-        print()
-    
-    print("=" * 80)
+
     print("Training completed!")
-    print()
+
     
     # Save model
     os.makedirs('models', exist_ok=True)
@@ -367,7 +360,7 @@ def main():
         'param_info': param_info,
     }, model_path)
     
-    print(f"✓ Model saved to {model_path}")
+    print(f"Model saved to {model_path}")
     print()
     
     # Save training plot
@@ -375,13 +368,12 @@ def main():
     save_training_plot(train_losses, val_metrics_history)
     
     # Test on test set
-    print("=" * 80)
     print("Evaluating on TEST set...")
-    print("-" * 80)
+
     
     test_metrics = evaluate(model, test_loader, device, iou_threshold=0.5)
     
-    print(f"\nTest Metrics (IoU threshold: 0.5):")
+    print(f"\nTest Metrics:")
     print(f"  Mean IoU:        {test_metrics['mean_iou']:.4f}")
     print(f"  Mean Precision:  {test_metrics['mean_precision']:.4f}")
     print(f"  Mean Recall:     {test_metrics['mean_recall']:.4f}")
@@ -389,31 +381,10 @@ def main():
     print(f"  GT Instances:    {test_metrics['total_gt_instances']}")
     print(f"  Pred Instances:  {test_metrics['total_pred_instances']}")
     print(f"  True Positives:  {test_metrics['total_true_positives']}")
-    print()
-    
-    # Summary
-    print("=" * 80)
-    print("✓ Custom Model Training Complete!")
-    print("=" * 80)
-    print(f"\nArchitecture Summary:")
-    print(f"  Custom layers: {param_info['custom_percentage']:.1f}% (>50% ✓)")
-    print(f"  Parameters: {param_info['total']:,}")
-    print(f"\nResults:")
-    print(f"  Final training loss: {train_losses[-1]:.4f}")
-    print(f"  Best val IoU:        {max(m['mean_iou'] for m in val_metrics_history):.4f}")
-    print(f"  Best val F1:         {max(m['f1_score'] for m in val_metrics_history):.4f}")
-    print(f"  Test Mean IoU:       {test_metrics['mean_iou']:.4f}")
-    print(f"  Test F1 Score:       {test_metrics['f1_score']:.4f}")
+    print("Custom Model Training Complete!")
     print(f"\nFiles saved:")
     print(f"  Model: {model_path}")
     print(f"  Training plot: outputs/custom_training_plot.png")
-    print()
-    print("=" * 80)
-    print("Points earned:")
-    print(f"  ✓ Own architecture (>50% layers): +2 points")
-    print(f"  ✓ Attention mechanism: +1 point")
-    print(f"  Total from this model: +3 points")
-    print("=" * 80)
 
 
 if __name__ == "__main__":
