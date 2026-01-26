@@ -54,3 +54,5 @@ wandb/
 data/
 data_split/
 /data
+outputs/
+models/
