@@ -247,7 +247,7 @@ def main():
     print("Architecture: ResNet-18 Backbone + Custom FPN/RPN/Heads (>50% own layers)")
     
     # Configuration
-    data_dir = 'data_split'
+    data_dir = 'data_split_a172'
     batch_size = 2
     num_workers = 2
     lr = 0.005
