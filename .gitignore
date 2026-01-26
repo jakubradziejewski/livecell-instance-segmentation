@@ -51,7 +51,7 @@ venv.bak/
 
 
 wandb/
-data/
+data*/
 data_split/
 /data
 outputs/

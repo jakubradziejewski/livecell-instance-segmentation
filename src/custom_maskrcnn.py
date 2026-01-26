@@ -76,7 +76,6 @@ class ImprovedFPN(nn.Module):
             for _ in in_channels_list
         ])
         
-        # CBAM attention for each level
         self.attention_modules = nn.ModuleList([
             CBAM(out_channels, reduction=16, kernel_size=7)
             for _ in in_channels_list
@@ -107,19 +106,17 @@ class ImprovedFPN(nn.Module):
             laterals, self.output_convs, self.attention_modules
         ):
             out = output_conv(lateral)
-            out = attention(out)  # Apply CBAM
+            out = attention(out)
             outputs.append(out)
         
         return outputs
 
 
-# IMPROVED RPN WITH BETTER OBJECTNESS SCORING
 class ImprovedRPN(nn.Module):
     """RPN with better objectness prediction."""
     def __init__(self, in_channels=256, num_anchors=9):
         super().__init__()
         
-        # Deeper conv for better discrimination
         self.conv = nn.Sequential(
             nn.Conv2d(in_channels, in_channels, 3, padding=1),
             nn.BatchNorm2d(in_channels),
@@ -160,7 +157,6 @@ class ImprovedCustomMaskHead(nn.Module):
             nn.ReLU(inplace=True)
         )
         
-        # Add CBAM here
         self.cbam1 = CBAM(256)
         
         self.conv2 = nn.Sequential(
@@ -196,10 +192,10 @@ class ImprovedCustomMaskHead(nn.Module):
 
     def forward(self, x):
         x = self.conv1(x)
-        x = self.cbam1(x)  # Apply attention
+        x = self.cbam1(x)
         
         x = self.conv2(x)
-        x = self.cbam2(x)  # Apply attention again
+        x = self.cbam2(x)
         
         x = self.conv3(x)
         x = self.conv4(x)
@@ -365,10 +361,7 @@ def compute_mask_loss_from_gt(mask_logits, proposals, targets, device, mask_size
 
 class ImprovedCustomMaskRCNN(nn.Module):
     """
-    IMPROVED Custom Mask R-CNN with:
-    1. CBAM attention in FPN and mask head
-    2. Better RPN with deeper conv layers
-    3. MUCH MORE AGGRESSIVE NMS and filtering in inference
+    ULTRA AGGRESSIVE Custom Mask R-CNN to reduce false positives
     """
     def __init__(self, num_classes=2, pretrained_backbone=True):
         super().__init__()
@@ -386,7 +379,6 @@ class ImprovedCustomMaskRCNN(nn.Module):
         self.layer3 = resnet.layer3
         self.layer4 = resnet.layer4
         
-        # Custom layers with improvements
         self.fpn = ImprovedFPN(
             in_channels_list=[64, 128, 256, 512],
             out_channels=256
@@ -479,7 +471,7 @@ class ImprovedCustomMaskRCNN(nn.Module):
         }
         
     def forward(self, images, targets=None):
-        """Forward with AGGRESSIVE duplicate removal."""
+        """Forward with ULTRA AGGRESSIVE duplicate removal."""
         if isinstance(images, list):
             images = torch.stack(images)
         
@@ -497,10 +489,8 @@ class ImprovedCustomMaskRCNN(nn.Module):
         c3 = self.layer3(c2)
         c4 = self.layer4(c3)
         
-        # Improved FPN with CBAM
         features = self.fpn([c1, c2, c3, c4])
         
-        # Improved RPN
         cls_scores, bbox_deltas = self.rpn(features)
         
         feature_map = features[0]
@@ -557,18 +547,18 @@ class ImprovedCustomMaskRCNN(nn.Module):
             }
             return losses
         else:
-            # ===== INFERENCE WITH AGGRESSIVE FILTERING =====
+            # ===== ULTRA AGGRESSIVE INFERENCE FILTERING =====
             predictions = []
             
             for batch_idx in range(batch_size):
                 objectness = torch.sigmoid(cls_score[batch_idx]).permute(1, 2, 0).reshape(-1)
                 
-                # CHANGE 1: Much stricter initial filtering
-                top_k = min(500, len(objectness))  # Reduced from 1000
+                # ULTRA STRICT: Only top 200 proposals (reduced from 500)
+                top_k = min(200, len(objectness))
                 top_scores, top_indices = torch.topk(objectness, top_k)
                 
-                # CHANGE 2: Higher score threshold at RPN stage
-                score_keep = top_scores > 0.3  # Increased from implicit low threshold
+                # ULTRA HIGH initial threshold
+                score_keep = top_scores > 0.5  # Increased from 0.3
                 top_scores = top_scores[score_keep]
                 top_indices = top_indices[score_keep]
                 
@@ -578,10 +568,10 @@ class ImprovedCustomMaskRCNN(nn.Module):
                 proposals[:, 0::2] = proposals[:, 0::2].clamp(0, img_w)
                 proposals[:, 1::2] = proposals[:, 1::2].clamp(0, img_h)
                 
-                # CHANGE 3: Stricter size filtering
+                # ULTRA STRICT size filtering
                 ws = proposals[:, 2] - proposals[:, 0]
                 hs = proposals[:, 3] - proposals[:, 1]
-                keep = (ws >= 15) & (hs >= 15)  # Increased from 10
+                keep = (ws >= 20) & (hs >= 20)  # Increased from 15
                 proposals = proposals[keep]
                 top_scores = top_scores[keep]
                 
@@ -594,9 +584,9 @@ class ImprovedCustomMaskRCNN(nn.Module):
                     })
                     continue
                 
-                # CHANGE 4: Much more aggressive NMS
-                keep_nms = nms(proposals, top_scores, iou_threshold=0.3)  # Reduced from 0.7
-                proposals = proposals[keep_nms[:50]]  # Keep fewer proposals (reduced from 100)
+                # ULTRA AGGRESSIVE first NMS
+                keep_nms = nms(proposals, top_scores, iou_threshold=0.2)  # Reduced from 0.3
+                proposals = proposals[keep_nms[:30]]  # Keep only 30 (reduced from 50)
                 
                 single_feature = feature_map[batch_idx:batch_idx+1]
                 roi_features = self.roi_align(single_feature, [proposals])
@@ -607,16 +597,16 @@ class ImprovedCustomMaskRCNN(nn.Module):
                 box_scores = cls_probs[:, 1]
                 box_labels = torch.ones(len(box_scores), dtype=torch.long, device=device)
                 
-                # CHANGE 5: Much higher confidence threshold
-                keep_scores = box_scores > 0.7  # Increased from 0.5
+                # ULTRA HIGH confidence threshold
+                keep_scores = box_scores > 0.85  # Increased from 0.7
                 final_boxes = proposals[keep_scores]
                 final_scores = box_scores[keep_scores]
                 final_labels = box_labels[keep_scores]
                 roi_features_kept = roi_features[keep_scores]
                 
-                # CHANGE 6: Apply NMS AGAIN on final boxes
+                # ULTRA AGGRESSIVE second NMS
                 if len(final_boxes) > 0:
-                    keep_final_nms = nms(final_boxes, final_scores, iou_threshold=0.2)  # Very aggressive
+                    keep_final_nms = nms(final_boxes, final_scores, iou_threshold=0.15)  # Reduced from 0.2
                     final_boxes = final_boxes[keep_final_nms]
                     final_scores = final_scores[keep_final_nms]
                     final_labels = final_labels[keep_final_nms]
@@ -644,8 +634,8 @@ class ImprovedCustomMaskRCNN(nn.Module):
                                 align_corners=False
                             ).squeeze()
                             
-                            # CHANGE 7: Higher mask threshold
-                            mask_binary = (mask_resized > 0.6).float()  # Increased from 0.5
+                            # ULTRA HIGH mask threshold
+                            mask_binary = (mask_resized > 0.7).float()  # Increased from 0.6
                             
                             final_masks[i, y1:y2, x1:x2] = mask_binary
                     
