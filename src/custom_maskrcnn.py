@@ -592,7 +592,7 @@ class ImprovedCustomMaskRCNN(nn.Module):
             
             # LOOSER matching threshold for foreground
             labels = torch.zeros(len(sample_proposals), dtype=torch.long, device=device)
-            labels[max_iou >= 0.3] = 1  # Was 0.5 - too strict!
+            labels[max_iou >= 0.3] = 1 
             
             # Box classification loss (foreground vs background)
             box_cls_loss = F.cross_entropy(cls_logits, labels)
@@ -644,18 +644,15 @@ class ImprovedCustomMaskRCNN(nn.Module):
             }
             return losses
         else:
-            # MINIMAL WORKING INFERENCE - Very lenient thresholds
             predictions = []
             
             for batch_idx in range(batch_size):
                 objectness = torch.sigmoid(cls_score[batch_idx]).permute(1, 2, 0).reshape(-1)
-                
-                # Take MORE proposals
-                top_k = min(500, len(objectness))
+
+                top_k = min(250, len(objectness))
                 top_scores, top_indices = torch.topk(objectness, top_k)
                 
-                # VERY LOW threshold - just want something!
-                score_keep = top_scores > 0.05  # Was 0.5 - WAY too high!
+                score_keep = top_scores > 0.3  
                 top_scores = top_scores[score_keep]
                 top_indices = top_indices[score_keep]
                 
@@ -665,10 +662,9 @@ class ImprovedCustomMaskRCNN(nn.Module):
                 proposals[:, 0::2] = proposals[:, 0::2].clamp(0, img_w)
                 proposals[:, 1::2] = proposals[:, 1::2].clamp(0, img_h)
                 
-                # Smaller minimum size
                 ws = proposals[:, 2] - proposals[:, 0]
                 hs = proposals[:, 3] - proposals[:, 1]
-                keep = (ws >= 10) & (hs >= 10)  # Was 20 - too restrictive
+                keep = (ws >= 10) & (hs >= 10)
                 proposals = proposals[keep]
                 top_scores = top_scores[keep]
                 
@@ -682,8 +678,8 @@ class ImprovedCustomMaskRCNN(nn.Module):
                     continue
                 
                 # More lenient NMS
-                keep_nms = nms(proposals, top_scores, iou_threshold=0.5)  # Was 0.2
-                proposals = proposals[keep_nms[:100]]  # Keep more proposals (was 30)
+                keep_nms = nms(proposals, top_scores, iou_threshold=0.4)
+                proposals = proposals[keep_nms[:50]] 
                 
                 single_feature = feature_map[batch_idx:batch_idx+1]
                 roi_features = self.roi_align(single_feature, [proposals])
@@ -694,8 +690,7 @@ class ImprovedCustomMaskRCNN(nn.Module):
                 box_scores = cls_probs[:, 1]
                 box_labels = torch.ones(len(box_scores), dtype=torch.long, device=device)
                 
-                # MUCH LOWER threshold - just want detections!
-                keep_scores = box_scores > 0.3  # Was 0.85 - CRAZY high for untrained model!
+                keep_scores = box_scores > 0.5  
                 final_boxes = proposals[keep_scores]
                 final_scores = box_scores[keep_scores]
                 final_labels = box_labels[keep_scores]
@@ -731,8 +726,7 @@ class ImprovedCustomMaskRCNN(nn.Module):
                             ).squeeze()
                             
                             # Lower mask threshold too
-                            mask_binary = (mask_resized > 0.5).float()  # Was 0.7
-                            
+                            mask_binary = (mask_resized > 0.5).float()  
                             final_masks[i, y1:y2, x1:x2] = mask_binary
                     
                     final_masks = (final_masks * 255).to(torch.uint8)
