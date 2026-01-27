@@ -359,6 +359,45 @@ def compute_mask_loss_from_gt(mask_logits, proposals, targets, device, mask_size
     
     return mask_loss
 
+def encode_boxes(boxes, anchors):
+    """
+    Encode target boxes as deltas relative to anchor boxes.
+    This is the CORRECT way to compute box regression targets.
+    
+    Args:
+        boxes: (N, 4) tensor of GT boxes in format [x1, y1, x2, y2]
+        anchors: (N, 4) tensor of anchor/proposal boxes [x1, y1, x2, y2]
+    
+    Returns:
+        deltas: (N, 4) tensor of encoded deltas [dx, dy, dw, dh]
+    """
+    # Convert boxes to center format
+    anchors_ctr_x = (anchors[:, 0] + anchors[:, 2]) / 2.0
+    anchors_ctr_y = (anchors[:, 1] + anchors[:, 3]) / 2.0
+    anchors_w = anchors[:, 2] - anchors[:, 0]
+    anchors_h = anchors[:, 3] - anchors[:, 1]
+    
+    boxes_ctr_x = (boxes[:, 0] + boxes[:, 2]) / 2.0
+    boxes_ctr_y = (boxes[:, 1] + boxes[:, 3]) / 2.0
+    boxes_w = boxes[:, 2] - boxes[:, 0]
+    boxes_h = boxes[:, 3] - boxes[:, 1]
+    
+    # Prevent division by zero
+    anchors_w = torch.clamp(anchors_w, min=1.0)
+    anchors_h = torch.clamp(anchors_h, min=1.0)
+    boxes_w = torch.clamp(boxes_w, min=1.0)
+    boxes_h = torch.clamp(boxes_h, min=1.0)
+    
+    # Encode as deltas (normalize by anchor size)
+    dx = (boxes_ctr_x - anchors_ctr_x) / anchors_w
+    dy = (boxes_ctr_y - anchors_ctr_y) / anchors_h
+    dw = torch.log(boxes_w / anchors_w)
+    dh = torch.log(boxes_h / anchors_h)
+    
+    deltas = torch.stack([dx, dy, dw, dh], dim=1)
+    
+    return deltas
+
 
 class ImprovedCustomMaskRCNN(nn.Module):
     """
@@ -429,7 +468,7 @@ class ImprovedCustomMaskRCNN(nn.Module):
             ious = box_iou(anchors, gt_boxes_cat)
             max_ious, _ = ious.max(dim=1)
             
-            pos_mask = max_ious > 0.7
+            pos_mask = max_ious >= 0.5
             neg_mask = max_ious < 0.3
             
             num_pos = min(pos_mask.sum().item(), 128)
@@ -609,16 +648,18 @@ class ImprovedCustomMaskRCNN(nn.Module):
                 # Extract deltas for foreground class (class 1): columns 4:8
                 fg_box_deltas = fg_box_regression[:, 4:8]  # Shape: (N_fg, 4)
                 
-                # Compute targets (simple: just the GT box coordinates)
-                # In a full implementation, these would be encoded deltas
+                # Compute target deltas by encoding GT boxes relative to proposals
+                target_deltas = encode_boxes(matched_gt_boxes, fg_proposals)
+                
+                # Now compute loss: predicted deltas vs target deltas
                 box_reg_loss = F.smooth_l1_loss(
                     fg_box_deltas,
-                    matched_gt_boxes,
+                    target_deltas,  
                     reduction='mean'
                 )
             else:
                 box_reg_loss = torch.tensor(0.0, device=device, requires_grad=True)
-            
+
             # Mask loss (only for foreground proposals)
             if foreground_mask.sum() > 0:
                 fg_mask_logits = mask_logits[foreground_mask]
@@ -634,7 +675,7 @@ class ImprovedCustomMaskRCNN(nn.Module):
                 )
             else:
                 mask_loss = torch.tensor(0.0, device=device, requires_grad=True)
-            
+
             losses = {
                 'loss_rpn_cls': rpn_losses['loss_rpn_cls'],
                 'loss_rpn_reg': rpn_losses['loss_rpn_reg'],
