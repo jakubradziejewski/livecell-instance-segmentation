@@ -1,11 +1,11 @@
 """
 Mask R-CNN Inference and Visualization Script for Tiled Images with SEGMENTATION
-Updated for 8x8 grid + 3x3 sliding window (36 tiles per image)
+Updated for 7x7 grid + 3x3 sliding window (25 tiles per image)
 NOW SUPPORTS DUAL MODEL COMPARISON (Custom + Transfer-Learning)
 
 1. Searches Train, Val, and Test splits for original images.
 2. Performs inference on individual tiles using BOTH models.
-3. Filters detections: only keeps cells with >50% area in CENTER mini-tile.
+3. Filters detections: only keeps cells with >40% area in valid mini-tiles.
 4. Merges tiles back into a single large image for visualization with MASKS.
 5. Shows segmentation on original GT images.
 6. Compares predictions from both models side-by-side.
@@ -43,9 +43,15 @@ import re
 import json
 from pycocotools import mask as maskUtils
 
-# Image dimensions constants
 IMG_WIDTH = 704
 IMG_HEIGHT = 520
+
+N_MINI_COLS = 7  # Number of mini-tile columns in the grid (7 for 5x5 tiles)
+N_MINI_ROWS = 7  # Number of mini-tile rows in the grid (7 for 5x5 tiles)
+TILE_SIZE = 3    # Each tile is TILE_SIZE x TILE_SIZE mini-tiles (3x3)
+N_TILES_COL = N_MINI_COLS - TILE_SIZE + 1  # Number of tile positions horizontally (7-3+1 = 5)
+N_TILES_ROW = N_MINI_ROWS - TILE_SIZE + 1  # Number of tile positions vertically (7-3+1 = 5)
+TOTAL_TILES = N_TILES_COL * N_TILES_ROW  # 5x5 = 25 total tiles
 
 
 def load_model(model_path, model_type='custom', num_classes=2, device='cuda'):
@@ -128,22 +134,21 @@ def group_tiles_by_image(test_dir):
     return dict(tiles_by_image)
 
 
-def get_tile_position_in_grid(tile_num, n_positions_col=6):
+def get_tile_position_in_grid(tile_num):
     """
-    Calculate the position of a tile in the 8x8 mini-tile grid.
+    Calculate the position of a tile in the NxN mini-tile grid.
     
-    For 8x8 grid with 3x3 sliding window: 6x6 = 36 tiles total
+    For 7x7 grid with 3x3 sliding window: 5x5 = 25 tiles total
     Each tile starts at position (col_start, row_start) in mini-tile coordinates
     
     Args:
-        tile_num: Tile index (0-35)
-        n_positions_col: Number of horizontal positions (6 for 8x8 grid)
+        tile_num: Tile index (0-24 for 5x5 grid)
     
     Returns:
-        (col_start, row_start): Starting position in 8x8 mini-tile grid
+        (col_start, row_start): Starting position in mini-tile grid
     """
-    row_start = tile_num // n_positions_col
-    col_start = tile_num % n_positions_col
+    row_start = tile_num // N_TILES_COL
+    col_start = tile_num % N_TILES_COL
     return col_start, row_start
 
 
@@ -204,38 +209,35 @@ def predict_on_tiles(model, tiles_info, device, transform):
     return results
 
 
-def get_valid_mini_tiles_for_tile(tile_num, n_mini_cols=8, n_mini_rows=8, n_positions_col=6):
+def get_valid_mini_tiles_for_tile(tile_num):
     """
     Determine which mini-tiles should be processed for a given tile.
     Returns mini-tiles that are either:
-    1. On the border of the 8x8 grid (row=0, row=7, col=0, or col=7), OR
+    1. On the border of the NxN grid (row=0, row=N-1, col=0, or col=N-1), OR
     2. The center mini-tile of this 3x3 tile (position [1,1] within the tile)
     
     Args:
-        tile_num: Tile index (0-35)
-        n_mini_cols: Number of mini-tile columns (8)
-        n_mini_rows: Number of mini-tile rows (8)
-        n_positions_col: Number of tile positions horizontally (6)
+        tile_num: Tile index (0 to TOTAL_TILES-1)
     
     Returns:
         List of (mini_col, mini_row) tuples to process for this tile
     """
-    col_start, row_start = get_tile_position_in_grid(tile_num, n_positions_col)
+    col_start, row_start = get_tile_position_in_grid(tile_num)
     
     # This tile covers mini-tiles [col_start:col_start+3, row_start:row_start+3]
     valid_mini_tiles = []
     
-    for local_row in range(3):
-        for local_col in range(3):
+    for local_row in range(TILE_SIZE):
+        for local_col in range(TILE_SIZE):
             mini_col = col_start + local_col
             mini_row = row_start + local_row
             
             # Check if this is the center mini-tile of the 3x3 tile
             is_center = (local_col == 1 and local_row == 1)
             
-            # Check if this mini-tile is on the border of the 8x8 grid
-            is_on_border = (mini_col == 0 or mini_col == n_mini_cols - 1 or 
-                           mini_row == 0 or mini_row == n_mini_rows - 1)
+            # Check if this mini-tile is on the border of the grid
+            is_on_border = (mini_col == 0 or mini_col == N_MINI_COLS - 1 or 
+                           mini_row == 0 or mini_row == N_MINI_ROWS - 1)
             
             # Include if it's center OR on border
             if is_center or is_on_border:
@@ -248,7 +250,7 @@ def filter_detections_by_border_mini_tiles(results, score_threshold=0.5, mask_th
     """
     Filter detections to only keep those with >mask_threshold area in valid mini-tiles.
     Valid mini-tiles are those that are either:
-    1. On the border of the 8x8 grid, OR
+    1. On the border of the grid, OR
     2. The center mini-tile of their respective 3x3 tile
     
     Processes tiles in order, avoiding duplicates by tracking which mini-tiles have been processed.
@@ -262,12 +264,8 @@ def filter_detections_by_border_mini_tiles(results, score_threshold=0.5, mask_th
         List of filtered detections with global coordinates
     """
     # Calculate mini-tile dimensions
-    n_mini_cols = 8
-    n_mini_rows = 8
-    mini_tile_width = IMG_WIDTH // n_mini_cols
-    mini_tile_height = IMG_HEIGHT // n_mini_rows
-    
-    n_positions_col = 6  # For 8x8 grid with 3x3 window
+    mini_tile_width = IMG_WIDTH // N_MINI_COLS
+    mini_tile_height = IMG_HEIGHT // N_MINI_ROWS
     
     filtered_detections = []
     processed_mini_tiles = set()  # Track which mini-tiles we've already processed
@@ -280,14 +278,14 @@ def filter_detections_by_border_mini_tiles(results, score_threshold=0.5, mask_th
         pred = result['prediction']
         
         # Get tile position in grid
-        col_start, row_start = get_tile_position_in_grid(tile_num, n_positions_col)
+        col_start, row_start = get_tile_position_in_grid(tile_num)
         
         # Calculate tile offset in global coordinates
         tile_x_offset = col_start * mini_tile_width
         tile_y_offset = row_start * mini_tile_height
         
         # Get valid mini-tiles for this tile (border OR center mini-tiles not yet processed)
-        valid_mini_tiles = get_valid_mini_tiles_for_tile(tile_num, n_mini_cols, n_mini_rows, n_positions_col)
+        valid_mini_tiles = get_valid_mini_tiles_for_tile(tile_num)
         
         # Filter out mini-tiles that have already been processed
         new_mini_tiles = [mt for mt in valid_mini_tiles if mt not in processed_mini_tiles]
@@ -389,11 +387,8 @@ def reconstruct_full_image(results):
         Reconstructed image as numpy array
     """
     # Calculate mini-tile dimensions
-    n_mini_cols = 8
-    n_mini_rows = 8
-    mini_tile_width = IMG_WIDTH // n_mini_cols
-    mini_tile_height = IMG_HEIGHT // n_mini_rows
-    n_positions_col = 6
+    mini_tile_width = IMG_WIDTH // N_MINI_COLS
+    mini_tile_height = IMG_HEIGHT // N_MINI_ROWS
     
     # Create full image canvas
     full_canvas = np.zeros((IMG_HEIGHT, IMG_WIDTH, 3))
@@ -401,7 +396,7 @@ def reconstruct_full_image(results):
     
     for result in results:
         tile_num = result['tile_num']
-        col_start, row_start = get_tile_position_in_grid(tile_num, n_positions_col)
+        col_start, row_start = get_tile_position_in_grid(tile_num)
         
         tile_x_offset = col_start * mini_tile_width
         tile_y_offset = row_start * mini_tile_height
@@ -641,7 +636,7 @@ def main():
     args = parser.parse_args()
     
     print("=" * 80)
-    print("Mask R-CNN: Dual Model Inference (Border + Center Mini-Tiles) - 8x8 Grid + 3x3 Window")
+    print(f"Mask R-CNN: Dual Model Inference ({N_MINI_COLS}x{N_MINI_ROWS} Grid + {TILE_SIZE}x{TILE_SIZE} Window = {TOTAL_TILES} Tiles)")
     print("=" * 80)
     print(f"Model 1 ({args.model1_name}): {args.model1_path} (type: {args.model1_type})")
     if args.model2_path:

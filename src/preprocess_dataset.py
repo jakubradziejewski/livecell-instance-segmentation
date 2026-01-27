@@ -1,12 +1,3 @@
-"""
-LIVECell Dataset Preprocessor with Image Tiling (Deterministic Splits)
-Logic Update:
-- 'num_images_per_split' now represents the TOTAL number of images to process.
-- Distribution: 70% Train, 15% Val, 15% Test.
-- Selection: Files are selected alphabetically from their respective source folders.
-- Tiling: 8x8 mini-tile grid, then 3x3 sliding window creates 36 tiles per image.
-"""
-
 import os
 import json
 from pathlib import Path
@@ -16,6 +7,10 @@ from PIL import Image
 from pycocotools.coco import COCO
 from tqdm import tqdm
 import argparse
+import math
+
+
+TILES_PER_IMAGE = 25  # Number of tiles to generate per image (7x7 grid with 3x3 sliding window)
 
 
 class LIVECellPreprocessor:
@@ -23,7 +18,7 @@ class LIVECellPreprocessor:
     Preprocesses LIVECell dataset by:
     1. Selecting specific counts of images (70/15/15 split of total)
     2. Sorting alphabetically for deterministic selection
-    3. Tiling large images into smaller patches using 8x8 grid + 3x3 sliding window
+    3. Tiling large images into smaller patches using configurable grid + 3x3 sliding window
     4. Remapping annotations to tiles
     """
 
@@ -32,7 +27,7 @@ class LIVECellPreprocessor:
         source_dir: str,
         output_dir: str,
         total_images: int = 100,
-        tiles_per_image: int = 20,
+        tiles_per_image: int = TILES_PER_IMAGE,
         tile_overlap: int = 50,
     ):
         """
@@ -40,14 +35,27 @@ class LIVECellPreprocessor:
             source_dir: Original LIVECell data directory
             output_dir: Where to save preprocessed data
             total_images: TOTAL number of images to use across all splits
-            tiles_per_image: How many tiles to create per image (approx) - NOTE: now fixed at 36
+            tiles_per_image: How many tiles to create per image (determines grid size)
             tile_overlap: Overlap between adjacent tiles in pixels - NOTE: now determined by 3x3 window
         """
         self.source_dir = Path(source_dir)
         self.output_dir = Path(output_dir)
         self.total_images = total_images
-        self.tiles_per_image = tiles_per_image
+        self.tiles_per_image = TILES_PER_IMAGE  # Always use the constant
         self.tile_overlap = tile_overlap
+        
+        # Calculate grid size based on tiles_per_image
+        # Formula: tiles = (grid_size - 2)^2 for 3x3 sliding window
+        # So: grid_size = sqrt(tiles) + 2
+        self.grid_size = int(math.sqrt(tiles_per_image)) + 2
+        
+        # Recalculate actual tiles that will be generated
+        self.actual_tiles = (self.grid_size - 2) ** 2
+        
+        print(f"Grid configuration:")
+        print(f"  - Requested tiles per image: {tiles_per_image}")
+        print(f"  - Grid size: {self.grid_size}x{self.grid_size}")
+        print(f"  - Actual tiles per image: {self.actual_tiles}")
 
         # Calculate limits per split based on 70/15/15 ratio
         n_train = int(self.total_images * 0.70)
@@ -61,7 +69,7 @@ class LIVECellPreprocessor:
             "test": n_test
         }
         
-        print(f"Target distribution (Total {self.total_images}):")
+        print(f"\nTarget distribution (Total {self.total_images}):")
         print(f"  - Train (70%): {n_train}")
         print(f"  - Val   (15%): {n_val}")
         print(f"  - Test  (15%): {n_test}")
@@ -72,7 +80,7 @@ class LIVECellPreprocessor:
         """
         Auto-detect LIVECell dataset structure.
         """
-        print(f"Detecting dataset structure in {self.source_dir}...")
+        print(f"\nDetecting dataset structure in {self.source_dir}...")
 
         self.annotations_dir = self.source_dir / "annotations"
 
@@ -113,19 +121,18 @@ class LIVECellPreprocessor:
 
     def calculate_tile_grid(self, img_width: int, img_height: int) -> Tuple[int, int, int, int]:
         """
-        Calculate 8x8 grid of mini-tiles.
+        Calculate grid of mini-tiles based on self.grid_size.
         
         Returns:
             mini_tile_width: Width of each mini-tile
             mini_tile_height: Height of each mini-tile
-            n_mini_cols: Number of mini-tile columns (8)
-            n_mini_rows: Number of mini-tile rows (8)
+            n_mini_cols: Number of mini-tile columns
+            n_mini_rows: Number of mini-tile rows
         """
-        # Fixed 8x8 grid of mini-tiles for 704x520 images
-        n_mini_cols = 8
-        n_mini_rows = 8
+        n_mini_cols = self.grid_size
+        n_mini_rows = self.grid_size
 
-        # Calculate mini-tile dimensions (704/8 = 88, 520/8 = 65)
+        # Calculate mini-tile dimensions
         mini_tile_width = img_width // n_mini_cols
         mini_tile_height = img_height // n_mini_rows
 
@@ -141,9 +148,10 @@ class LIVECellPreprocessor:
         n_mini_rows: int,
     ) -> List[Tuple[int, int, int, int]]:
         """
-        Generate tile coordinates using 3x3 sliding window over 8x8 mini-tile grid.
+        Generate tile coordinates using 3x3 sliding window over mini-tile grid.
         
         This creates overlapping tiles where each tile spans 3x3 mini-tiles.
+        For a 7x7 grid, this produces 5x5 = 25 tiles total.
         For an 8x8 grid, this produces 6x6 = 36 tiles total.
         
         Args:
@@ -151,8 +159,8 @@ class LIVECellPreprocessor:
             img_height: Full image height
             mini_tile_width: Width of one mini-tile
             mini_tile_height: Height of one mini-tile
-            n_mini_cols: Number of mini-tile columns (8)
-            n_mini_rows: Number of mini-tile rows (8)
+            n_mini_cols: Number of mini-tile columns
+            n_mini_rows: Number of mini-tile rows
             
         Returns:
             List of tile coordinates as (x_min, y_min, x_max, y_max)
@@ -163,6 +171,7 @@ class LIVECellPreprocessor:
         window_size = 3
         
         # Calculate how many positions the window can slide
+        # For 7 mini-tiles and window of 3: positions 0-2, 1-3, 2-4, 3-5, 4-6 = 5 positions
         # For 8 mini-tiles and window of 3: positions 0-2, 1-3, 2-4, 3-5, 4-6, 5-7 = 6 positions
         n_positions_col = n_mini_cols - window_size + 1
         n_positions_row = n_mini_rows - window_size + 1
@@ -321,7 +330,7 @@ class LIVECellPreprocessor:
 
     def preprocess(self):
         print("=" * 80)
-        print("LIVECell Dataset Preprocessing (Deterministic + 8x8 Grid + 3x3 Window)")
+        print("LIVECell Dataset Preprocessing (7x7 Grid + 3x3 Window)")
         print("=" * 80)
 
         cocos = {}
@@ -367,7 +376,7 @@ class LIVECellPreprocessor:
             selected_imgs = valid_imgs[:target_limit]
             
             print(f"  Selected {len(selected_imgs)} images (sorted alphabetically)")
-            print(f"  Will generate ~36 tiles per image (8x8 grid, 3x3 sliding window)")
+            print(f"  Will generate ~{self.actual_tiles} tiles per image ({self.grid_size}x{self.grid_size} grid, 3x3 sliding window)")
             if len(selected_imgs) < target_limit:
                  print(f"  ⚠ Warning: Requested {target_limit} but only found {len(selected_imgs)} valid images")
 
@@ -426,8 +435,7 @@ if __name__ == "__main__":
         default=100, 
         help="TOTAL number of source images to process across all splits (split 70/15/15)"
     )
-    
-    parser.add_argument("--tiles_per_image", type=int, default=36, help="Tiles per image (now fixed at 36 with 8x8 grid + 3x3 window)")
+
     parser.add_argument("--tile_overlap", type=int, default=0, help="Overlap determined by 3x3 sliding window")
 
     args = parser.parse_args()
@@ -435,8 +443,8 @@ if __name__ == "__main__":
     preprocessor = LIVECellPreprocessor(
         source_dir=args.source_dir,
         output_dir=args.output_dir,
-        total_images=args.num_images_per_split, # Passing as total_images
-        tiles_per_image=args.tiles_per_image,
+        total_images=args.num_images_per_split,
+        tiles_per_image=TILES_PER_IMAGE,
         tile_overlap=args.tile_overlap,
     )
 
