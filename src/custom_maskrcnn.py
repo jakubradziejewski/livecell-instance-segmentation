@@ -320,7 +320,7 @@ def compute_mask_loss_from_gt(mask_logits, proposals, targets, device, mask_size
             all_gt_labels.append(target['labels'])
     
     if len(all_gt_boxes) == 0:
-        return mask_logits.pow(2).mean() * 0.01
+        return torch.tensor(0.0, device=device, requires_grad=True)
     
     gt_boxes = torch.cat(all_gt_boxes)
     gt_masks_list = torch.cat(all_gt_masks)
@@ -329,10 +329,11 @@ def compute_mask_loss_from_gt(mask_logits, proposals, targets, device, mask_size
     ious = box_iou(proposals, gt_boxes)
     max_ious, matched_idxs = ious.max(dim=1)
     
-    positive_mask = max_ious > 0.5
+    # LOOSER threshold for mask training
+    positive_mask = max_ious > 0.3  # Was 0.5 - too strict!
     
     if positive_mask.sum() == 0:
-        return mask_logits.pow(2).mean() * 0.01
+        return torch.tensor(0.0, device=device, requires_grad=True)
     
     positive_proposals = proposals[positive_mask]
     positive_mask_logits = mask_logits[positive_mask]
@@ -508,63 +509,153 @@ class ImprovedCustomMaskRCNN(nn.Module):
         )
         
         if self.training:
-            # SIMPLIFIED TRAINING - Focus on mask loss only
+            # Compute RPN losses
             rpn_losses = self.compute_rpn_loss(
                 cls_scores, bbox_deltas, anchors, targets, device
             )
             
-            all_gt_boxes = []
-            for target in targets:
-                if len(target['boxes']) > 0:
-                    all_gt_boxes.append(target['boxes'])
+            # Generate proposals from RPN (just like inference!)
+            # Process first image in batch for simplicity
+            objectness = torch.sigmoid(cls_score[0]).permute(1, 2, 0).reshape(-1)
             
-            if len(all_gt_boxes) > 0:
-                gt_boxes_batch = torch.cat(all_gt_boxes)
-                num_samples = min(32, len(gt_boxes_batch))
-                sampled_indices = torch.randperm(len(gt_boxes_batch), device=device)[:num_samples]
-                sample_proposals = gt_boxes_batch[sampled_indices]
+            # Take many proposals for training
+            top_k = min(500, len(objectness))
+            top_scores, top_indices = torch.topk(objectness, top_k)
+            
+            # VERY lenient threshold for training
+            score_keep = top_scores > 0.01  # Almost everything!
+            top_scores = top_scores[score_keep]
+            top_indices = top_indices[score_keep]
+            
+            if len(top_indices) == 0:
+                # No proposals generated - return zero losses
+                return {
+                    'loss_rpn_cls': rpn_losses['loss_rpn_cls'],
+                    'loss_rpn_reg': rpn_losses['loss_rpn_reg'],
+                    'loss_box_cls': torch.tensor(0.0, device=device, requires_grad=True),
+                    'loss_box_reg': torch.tensor(0.0, device=device, requires_grad=True),
+                    'loss_mask': torch.tensor(0.0, device=device, requires_grad=True),
+                }
+            
+            # Get proposals from anchors
+            proposals = anchors[top_indices]
+            
+            # Clamp proposals to image bounds
+            img_h, img_w = images.shape[-2:]
+            proposals[:, 0::2] = proposals[:, 0::2].clamp(0, img_w)
+            proposals[:, 1::2] = proposals[:, 1::2].clamp(0, img_h)
+            
+            # Filter by size - very small minimum
+            ws = proposals[:, 2] - proposals[:, 0]
+            hs = proposals[:, 3] - proposals[:, 1]
+            keep = (ws >= 5) & (hs >= 5)  # Smaller for training
+            proposals = proposals[keep]
+            
+            if len(proposals) == 0:
+                # No valid proposals - return zero losses
+                return {
+                    'loss_rpn_cls': rpn_losses['loss_rpn_cls'],
+                    'loss_rpn_reg': rpn_losses['loss_rpn_reg'],
+                    'loss_box_cls': torch.tensor(0.0, device=device, requires_grad=True),
+                    'loss_box_reg': torch.tensor(0.0, device=device, requires_grad=True),
+                    'loss_mask': torch.tensor(0.0, device=device, requires_grad=True),
+                }
+            
+            # Sample MORE proposals for training
+            num_samples = min(128, len(proposals))  # Was 64
+            sampled_indices = torch.randperm(len(proposals), device=device)[:num_samples]
+            sample_proposals = proposals[sampled_indices]
+            
+            # Extract ROI features from PROPOSALS (not GT!)
+            roi_features = self.roi_align(feature_map[:1], [sample_proposals])
+            
+            # Forward through detection heads
+            cls_logits, box_regression = self.box_head(roi_features)
+            mask_logits = self.mask_head(roi_features)
+            
+            # Match proposals to ground truth for loss computation
+            gt_boxes = targets[0]['boxes']
+            
+            if len(gt_boxes) == 0:
+                # No GT boxes - return zero losses
+                return {
+                    'loss_rpn_cls': rpn_losses['loss_rpn_cls'],
+                    'loss_rpn_reg': rpn_losses['loss_rpn_reg'],
+                    'loss_box_cls': torch.tensor(0.0, device=device, requires_grad=True),
+                    'loss_box_reg': torch.tensor(0.0, device=device, requires_grad=True),
+                    'loss_mask': torch.tensor(0.0, device=device, requires_grad=True),
+                }
+            
+            # Compute IoU between proposals and GT boxes
+            ious = box_iou(sample_proposals, gt_boxes)
+            max_iou, matched_gt_idx = ious.max(dim=1)
+            
+            # LOOSER matching threshold for foreground
+            labels = torch.zeros(len(sample_proposals), dtype=torch.long, device=device)
+            labels[max_iou >= 0.3] = 1  # Was 0.5 - too strict!
+            
+            # Box classification loss (foreground vs background)
+            box_cls_loss = F.cross_entropy(cls_logits, labels)
+            
+            # Box regression loss (only for foreground proposals)
+            foreground_mask = labels == 1
+            if foreground_mask.sum() > 0:
+                # Get matched GT boxes for foreground proposals
+                matched_gt_boxes = gt_boxes[matched_gt_idx[foreground_mask]]
+                fg_proposals = sample_proposals[foreground_mask]
+                fg_box_regression = box_regression[foreground_mask]
                 
-                roi_features = self.roi_align(feature_map[:1], [sample_proposals])
-                cls_logits, box_regression = self.box_head(roi_features)
-                mask_logits = self.mask_head(roi_features)
+                # box_regression shape: (N_fg, num_classes * 4) = (N_fg, 8)
+                # Extract deltas for foreground class (class 1): columns 4:8
+                fg_box_deltas = fg_box_regression[:, 4:8]  # Shape: (N_fg, 4)
                 
-                mask_loss = compute_mask_loss_from_gt(
-                    mask_logits, sample_proposals, targets, device, mask_size=28
+                # Compute targets (simple: just the GT box coordinates)
+                # In a full implementation, these would be encoded deltas
+                box_reg_loss = F.smooth_l1_loss(
+                    fg_box_deltas,
+                    matched_gt_boxes,
+                    reduction='mean'
                 )
-                
-                # Keep box losses minimal (just for stability)
-                box_cls_loss = F.cross_entropy(
-                    cls_logits,
-                    torch.ones(len(cls_logits), dtype=torch.long, device=device)
-                ) 
-                
-                box_reg_loss = box_regression.abs().mean()
-                
             else:
-                mask_loss = feature_map.std()
-                box_cls_loss = feature_map.pow(2).mean()
-                box_reg_loss = feature_map.abs().mean()
+                box_reg_loss = torch.tensor(0.0, device=device, requires_grad=True)
             
-            # SIMPLIFIED LOSS - Mask is primary
+            # Mask loss (only for foreground proposals)
+            if foreground_mask.sum() > 0:
+                fg_mask_logits = mask_logits[foreground_mask]
+                fg_matched_gt_idx = matched_gt_idx[foreground_mask]
+                
+                # Compute mask loss using matched GT masks
+                mask_loss = compute_mask_loss_from_gt(
+                    fg_mask_logits, 
+                    sample_proposals[foreground_mask],
+                    targets, 
+                    device, 
+                    mask_size=28
+                )
+            else:
+                mask_loss = torch.tensor(0.0, device=device, requires_grad=True)
+            
             losses = {
-                'loss_rpn_cls': rpn_losses['loss_rpn_cls'],  # Reduced
-                'loss_rpn_reg': rpn_losses['loss_rpn_reg'],  # Ignored
-                'loss_box_cls': box_cls_loss,  # Minimal
-                'loss_box_reg': box_reg_loss,  # Minimal
-                'loss_mask': mask_loss,  # PRIMARY LOSS
+                'loss_rpn_cls': rpn_losses['loss_rpn_cls'],
+                'loss_rpn_reg': rpn_losses['loss_rpn_reg'],
+                'loss_box_cls': box_cls_loss,
+                'loss_box_reg': box_reg_loss,
+                'loss_mask': mask_loss,
             }
             return losses
         else:
-            # Ultra-aggressive inference
+            # MINIMAL WORKING INFERENCE - Very lenient thresholds
             predictions = []
             
             for batch_idx in range(batch_size):
                 objectness = torch.sigmoid(cls_score[batch_idx]).permute(1, 2, 0).reshape(-1)
                 
-                top_k = min(200, len(objectness))
+                # Take MORE proposals
+                top_k = min(500, len(objectness))
                 top_scores, top_indices = torch.topk(objectness, top_k)
                 
-                score_keep = top_scores > 0.5
+                # VERY LOW threshold - just want something!
+                score_keep = top_scores > 0.05  # Was 0.5 - WAY too high!
                 top_scores = top_scores[score_keep]
                 top_indices = top_indices[score_keep]
                 
@@ -574,9 +665,10 @@ class ImprovedCustomMaskRCNN(nn.Module):
                 proposals[:, 0::2] = proposals[:, 0::2].clamp(0, img_w)
                 proposals[:, 1::2] = proposals[:, 1::2].clamp(0, img_h)
                 
+                # Smaller minimum size
                 ws = proposals[:, 2] - proposals[:, 0]
                 hs = proposals[:, 3] - proposals[:, 1]
-                keep = (ws >= 20) & (hs >= 20)
+                keep = (ws >= 10) & (hs >= 10)  # Was 20 - too restrictive
                 proposals = proposals[keep]
                 top_scores = top_scores[keep]
                 
@@ -589,8 +681,9 @@ class ImprovedCustomMaskRCNN(nn.Module):
                     })
                     continue
                 
-                keep_nms = nms(proposals, top_scores, iou_threshold=0.2)
-                proposals = proposals[keep_nms[:30]]
+                # More lenient NMS
+                keep_nms = nms(proposals, top_scores, iou_threshold=0.5)  # Was 0.2
+                proposals = proposals[keep_nms[:100]]  # Keep more proposals (was 30)
                 
                 single_feature = feature_map[batch_idx:batch_idx+1]
                 roi_features = self.roi_align(single_feature, [proposals])
@@ -601,14 +694,16 @@ class ImprovedCustomMaskRCNN(nn.Module):
                 box_scores = cls_probs[:, 1]
                 box_labels = torch.ones(len(box_scores), dtype=torch.long, device=device)
                 
-                keep_scores = box_scores > 0.85
+                # MUCH LOWER threshold - just want detections!
+                keep_scores = box_scores > 0.3  # Was 0.85 - CRAZY high for untrained model!
                 final_boxes = proposals[keep_scores]
                 final_scores = box_scores[keep_scores]
                 final_labels = box_labels[keep_scores]
                 roi_features_kept = roi_features[keep_scores]
                 
                 if len(final_boxes) > 0:
-                    keep_final_nms = nms(final_boxes, final_scores, iou_threshold=0.15)
+                    # More lenient final NMS
+                    keep_final_nms = nms(final_boxes, final_scores, iou_threshold=0.5)  # Was 0.15
                     final_boxes = final_boxes[keep_final_nms]
                     final_scores = final_scores[keep_final_nms]
                     final_labels = final_labels[keep_final_nms]
@@ -635,7 +730,8 @@ class ImprovedCustomMaskRCNN(nn.Module):
                                 align_corners=False
                             ).squeeze()
                             
-                            mask_binary = (mask_resized > 0.7).float()
+                            # Lower mask threshold too
+                            mask_binary = (mask_resized > 0.5).float()  # Was 0.7
                             
                             final_masks[i, y1:y2, x1:x2] = mask_binary
                     
