@@ -4,6 +4,7 @@ Logic Update:
 - 'num_images_per_split' now represents the TOTAL number of images to process.
 - Distribution: 70% Train, 15% Val, 15% Test.
 - Selection: Files are selected alphabetically from their respective source folders.
+- Tiling: 8x8 mini-tile grid, then 3x3 sliding window creates 36 tiles per image.
 """
 
 import os
@@ -22,7 +23,7 @@ class LIVECellPreprocessor:
     Preprocesses LIVECell dataset by:
     1. Selecting specific counts of images (70/15/15 split of total)
     2. Sorting alphabetically for deterministic selection
-    3. Tiling large images into smaller patches
+    3. Tiling large images into smaller patches using 8x8 grid + 3x3 sliding window
     4. Remapping annotations to tiles
     """
 
@@ -39,8 +40,8 @@ class LIVECellPreprocessor:
             source_dir: Original LIVECell data directory
             output_dir: Where to save preprocessed data
             total_images: TOTAL number of images to use across all splits
-            tiles_per_image: How many tiles to create per image (approx)
-            tile_overlap: Overlap between adjacent tiles in pixels
+            tiles_per_image: How many tiles to create per image (approx) - NOTE: now fixed at 36
+            tile_overlap: Overlap between adjacent tiles in pixels - NOTE: now determined by 3x3 window
         """
         self.source_dir = Path(source_dir)
         self.output_dir = Path(output_dir)
@@ -111,33 +112,72 @@ class LIVECellPreprocessor:
                 raise ValueError(f"Missing annotation file for {split}: {ann_path}")
 
     def calculate_tile_grid(self, img_width: int, img_height: int) -> Tuple[int, int, int, int]:
-        n_cols = int(np.sqrt(self.tiles_per_image))
-        n_rows = int(np.ceil(self.tiles_per_image / n_cols))
+        """
+        Calculate 8x8 grid of mini-tiles.
+        
+        Returns:
+            mini_tile_width: Width of each mini-tile
+            mini_tile_height: Height of each mini-tile
+            n_mini_cols: Number of mini-tile columns (8)
+            n_mini_rows: Number of mini-tile rows (8)
+        """
+        # Fixed 8x8 grid of mini-tiles for 704x520 images
+        n_mini_cols = 8
+        n_mini_rows = 8
 
-        tile_width = (img_width + (n_cols - 1) * self.tile_overlap) // n_cols
-        tile_height = (img_height + (n_rows - 1) * self.tile_overlap) // n_rows
+        # Calculate mini-tile dimensions (704/8 = 88, 520/8 = 65)
+        mini_tile_width = img_width // n_mini_cols
+        mini_tile_height = img_height // n_mini_rows
 
-        return tile_width, tile_height, n_cols, n_rows
-
+        return mini_tile_width, mini_tile_height, n_mini_cols, n_mini_rows
+    
     def get_tile_coordinates(
         self,
         img_width: int,
         img_height: int,
-        tile_width: int,
-        tile_height: int,
-        n_cols: int,
-        n_rows: int,
+        mini_tile_width: int,
+        mini_tile_height: int,
+        n_mini_cols: int,
+        n_mini_rows: int,
     ) -> List[Tuple[int, int, int, int]]:
+        """
+        Generate tile coordinates using 3x3 sliding window over 8x8 mini-tile grid.
+        
+        This creates overlapping tiles where each tile spans 3x3 mini-tiles.
+        For an 8x8 grid, this produces 6x6 = 36 tiles total.
+        
+        Args:
+            img_width: Full image width
+            img_height: Full image height
+            mini_tile_width: Width of one mini-tile
+            mini_tile_height: Height of one mini-tile
+            n_mini_cols: Number of mini-tile columns (8)
+            n_mini_rows: Number of mini-tile rows (8)
+            
+        Returns:
+            List of tile coordinates as (x_min, y_min, x_max, y_max)
+        """
         tiles = []
-        for row in range(n_rows):
-            for col in range(n_cols):
-                x_min = max(0, col * tile_width - col * self.tile_overlap)
-                y_min = max(0, row * tile_height - row * self.tile_overlap)
-                x_max = min(img_width, x_min + tile_width)
-                y_max = min(img_height, y_min + tile_height)
-
-                if (x_max - x_min) > 0 and (y_max - y_min) > 0:
-                    tiles.append((x_min, y_min, x_max, y_max))
+        
+        # Sliding window: 3x3 mini-tiles
+        window_size = 3
+        
+        # Calculate how many positions the window can slide
+        # For 8 mini-tiles and window of 3: positions 0-2, 1-3, 2-4, 3-5, 4-6, 5-7 = 6 positions
+        n_positions_col = n_mini_cols - window_size + 1
+        n_positions_row = n_mini_rows - window_size + 1
+        
+        # Slide window over the grid
+        for row_start in range(n_positions_row):
+            for col_start in range(n_positions_col):
+                # Calculate pixel coordinates for this 3x3 window
+                x_min = col_start * mini_tile_width
+                y_min = row_start * mini_tile_height
+                x_max = (col_start + window_size) * mini_tile_width
+                y_max = (row_start + window_size) * mini_tile_height
+                
+                tiles.append((x_min, y_min, x_max, y_max))
+        
         return tiles
 
     def remap_annotation_to_tile(
@@ -233,9 +273,9 @@ class LIVECellPreprocessor:
 
         img_width, img_height = img.size
 
-        tile_w, tile_h, n_cols, n_rows = self.calculate_tile_grid(img_width, img_height)
+        mini_tile_w, mini_tile_h, n_mini_cols, n_mini_rows = self.calculate_tile_grid(img_width, img_height)
         tile_coords_list = self.get_tile_coordinates(
-            img_width, img_height, tile_w, tile_h, n_cols, n_rows
+            img_width, img_height, mini_tile_w, mini_tile_h, n_mini_cols, n_mini_rows
         )
 
         new_images = []
@@ -281,7 +321,7 @@ class LIVECellPreprocessor:
 
     def preprocess(self):
         print("=" * 80)
-        print("LIVECell Dataset Preprocessing (Deterministic)")
+        print("LIVECell Dataset Preprocessing (Deterministic + 8x8 Grid + 3x3 Window)")
         print("=" * 80)
 
         cocos = {}
@@ -327,6 +367,7 @@ class LIVECellPreprocessor:
             selected_imgs = valid_imgs[:target_limit]
             
             print(f"  Selected {len(selected_imgs)} images (sorted alphabetically)")
+            print(f"  Will generate ~36 tiles per image (8x8 grid, 3x3 sliding window)")
             if len(selected_imgs) < target_limit:
                  print(f"  ⚠ Warning: Requested {target_limit} but only found {len(selected_imgs)} valid images")
 
@@ -386,8 +427,8 @@ if __name__ == "__main__":
         help="TOTAL number of source images to process across all splits (split 70/15/15)"
     )
     
-    parser.add_argument("--tiles_per_image", type=int, default=20, help="Approximate tiles per image")
-    parser.add_argument("--tile_overlap", type=int, default=50, help="Overlap between tiles (pixels)")
+    parser.add_argument("--tiles_per_image", type=int, default=36, help="Tiles per image (now fixed at 36 with 8x8 grid + 3x3 window)")
+    parser.add_argument("--tile_overlap", type=int, default=0, help="Overlap determined by 3x3 sliding window")
 
     args = parser.parse_args()
 

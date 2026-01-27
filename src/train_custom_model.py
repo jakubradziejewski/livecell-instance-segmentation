@@ -247,7 +247,7 @@ def main():
     print("Architecture: ResNet-18 Backbone + Custom FPN/RPN/Heads (>50% own layers)")
     
     # Configuration
-    data_dir = 'data_split_a172'
+    data_dir = 'data_split'
     batch_size = 2
     num_workers = 2
     lr = 0.005
@@ -283,7 +283,7 @@ def main():
     # Create custom model
     print("Creating custom model...")
     print("-" * 80)
-    model = get_custom_model(num_classes=num_classes, pretrained_backbone=True)
+    model = get_custom_model(num_classes=num_classes)
     model.to(device)
     
     # Count parameters
