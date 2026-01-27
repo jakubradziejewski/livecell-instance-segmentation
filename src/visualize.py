@@ -25,7 +25,7 @@ def load_model(model_path, model_type='custom', num_classes=2, device='cuda'):
     if model_type == 'custom':
         from custom_maskrcnn import get_custom_model
         
-        model = get_custom_model(num_classes=num_classes, pretrained_backbone=False)
+        model = get_custom_model(num_classes=num_classes)
         
         checkpoint = torch.load(model_path, map_location=device, weights_only=False)
         

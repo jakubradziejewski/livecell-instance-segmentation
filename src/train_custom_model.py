@@ -283,7 +283,7 @@ def main():
     # Create custom model
     print("Creating custom model...")
     print("-" * 80)
-    model = get_custom_model(num_classes=num_classes, pretrained_backbone=True)
+    model = get_custom_model(num_classes=num_classes)
     model.to(device)
     
     # Count parameters
