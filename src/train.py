@@ -48,7 +48,7 @@ def train_one_epoch(model, dataloader, optimizer, device, epoch):
     
     for batch_idx, (images, targets) in enumerate(progress_bar):
         # Move to device
-        images = [img.to(device) for img in images]
+        images = torch.stack([img.to(device) for img in images])  
         targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
         
         # Forward pass
@@ -120,8 +120,7 @@ def evaluate(model, dataloader, device, iou_threshold=0.5):
     
     for images, targets in progress_bar:
         # Move to device
-        images_device = [img.to(device) for img in images]
-        
+        images_device = torch.stack([img.to(device) for img in images])
         # Predict
         predictions = model(images_device)
         
@@ -248,8 +247,8 @@ def main():
     """
     # Parse command-line arguments
     parser = argparse.ArgumentParser(description='Train Mask R-CNN model (custom or transfer learning)')
-    parser.add_argument('--model', type=str, default='custom', choices=['custom', 'maskrcnn'],
-                        help='Model type to train: "custom" for custom architecture or "maskrcnn" for transfer learning')
+    parser.add_argument('--model', type=str, default='custom', choices=['custom', 'transfer'],
+                        help='Model type to train: "custom" for custom architecture or "transfer" for transfer learning')
     parser.add_argument('--batch_size', type=int, default=2,
                         help='Batch size for training')
     parser.add_argument('--num_epochs', type=int, default=1,
