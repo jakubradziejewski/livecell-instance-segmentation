@@ -246,9 +246,7 @@ def main():
     Main training script for custom architecture.
     """
     # Parse command-line arguments
-    parser = argparse.ArgumentParser(description='Train Mask R-CNN model (custom or transfer learning)')
-    parser.add_argument('--model', type=str, default='custom', choices=['custom', 'transfer'],
-                        help='Model type to train: "custom" for custom architecture or "transfer" for transfer learning')
+    parser = argparse.ArgumentParser(description='Train Custom Mask R-CNN model')
     parser.add_argument('--batch_size', type=int, default=2,
                         help='Batch size for training')
     parser.add_argument('--num_epochs', type=int, default=1,
@@ -257,12 +255,10 @@ def main():
                         help='Learning rate')
     args = parser.parse_args()
     
-    print(f"Training with {args.model.upper()} model")
+
     print("=" * 80)
-    if args.model == 'custom':
-        print("Architecture: ResNet-18 Backbone + Custom FPN/RPN/Heads (>50% own layers)")
-    else:
-        print("Architecture: Pretrained Mask R-CNN with Transfer Learning")
+    print("Architecture: ResNet-18 Backbone + Custom FPN/RPN/Heads (>50% own layers)")
+
     
     # Configuration
     data_dir = 'data_split'
@@ -274,7 +270,6 @@ def main():
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     
     print(f"\nConfiguration:")
-    print(f"  Model type: {args.model}")
     print(f"  Device: {device}")
     print(f"  Batch size: {batch_size}")
     print(f"  Learning rate: {lr}")
@@ -299,33 +294,23 @@ def main():
     print(f"  Val:   {len(val_loader.dataset)} images, {len(val_loader)} batches")
     print(f"  Test:  {len(test_loader.dataset)} images, {len(test_loader)} batches")
     
-    # Create model based on argument
-    print(f"\nCreating {args.model} model...")
+
+    print(f"\nCreating custom model...")
     print("-" * 80)
     
-    if args.model == 'custom':
-        model = get_custom_model(num_classes=num_classes)
-        model.to(device)
+    model = get_custom_model(num_classes=num_classes)
+    model.to(device)
         
-        # Count parameters for custom model
-        param_info = model.count_parameters()
+    # Count parameters for custom model
+    param_info = model.count_parameters()
         
-        print(f"Custom model created")
-        print(f"  Total parameters:      {param_info['total']:,}")
-        print(f"  Backbone (borrowed):   {param_info['backbone']:,} ({100-param_info['custom_percentage']:.1f}%)")
-        print(f"  Custom layers (yours): {param_info['custom']:,} ({param_info['custom_percentage']:.1f}%)")
-        print(f"  Custom >50%: {param_info['custom_percentage'] > 50}")
-        print(f"  Model size: ~{param_info['total'] * 4 / (1024**2):.1f} MB")
-    else:
-        model = get_model_maskrcnn(num_classes=num_classes)
-        model.to(device)
-        
-        # Count total parameters for maskrcnn model
-        total_params = sum(p.numel() for p in model.parameters())
-        print(f"Mask R-CNN model created")
-        print(f"  Total parameters: {total_params:,}")
-        print(f"  Model size: ~{total_params * 4 / (1024**2):.1f} MB")
-        param_info = None  # No custom param info for maskrcnn
+    print(f"Custom model created")
+    print(f"  Total parameters:      {param_info['total']:,}")
+    print(f"  Backbone (borrowed):   {param_info['backbone']:,} ({100-param_info['custom_percentage']:.1f}%)")
+    print(f"  Custom layers (yours): {param_info['custom']:,} ({param_info['custom_percentage']:.1f}%)")
+    print(f"  Custom >50%: {param_info['custom_percentage'] > 50}")
+    print(f"  Model size: ~{param_info['total'] * 4 / (1024**2):.1f} MB")
+
     
     # Optimizer
     optimizer = torch.optim.AdamW(
@@ -381,7 +366,7 @@ def main():
     
     # Save model
     os.makedirs('models', exist_ok=True)
-    model_path = f'models/{args.model}_maskrcnn_{num_epochs}epochs.pth'
+    model_path = f'models/custom_maskrcnn_{num_epochs}epochs.pth'
     
     save_dict = {
         'epoch': num_epochs,
@@ -389,7 +374,7 @@ def main():
         'optimizer_state_dict': optimizer.state_dict(),
         'train_losses': train_losses,
         'val_metrics': val_metrics_history,
-        'model_type': args.model,
+        'model_type': 'custom',
     }
     
     if param_info is not None:
@@ -402,7 +387,7 @@ def main():
     
     # Save training plot
     print("Creating training plots...")
-    plot_path = f'outputs/{args.model}_training_plot.png'
+    plot_path = f'outputs/custom_training_plot.png'
     save_training_plot(train_losses, val_metrics_history, save_path=plot_path)
     
     # Test on test set
@@ -421,7 +406,7 @@ def main():
     print(f"  True Positives:  {test_metrics['total_true_positives']}")
     
     print("\n" + "=" * 80)
-    print(f"{args.model.upper()} Model Training Complete!")
+    print(f"Custom Model Training Complete!")
     print(f"\nFiles saved:")
     print(f"  Model: {model_path}")
     print(f"  Training plot: {plot_path}")
