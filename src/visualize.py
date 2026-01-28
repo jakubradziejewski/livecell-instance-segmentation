@@ -1,33 +1,3 @@
-"""
-Mask R-CNN Inference and Visualization Script for Tiled Images with SEGMENTATION
-Updated for 7x7 grid + 3x3 sliding window (25 tiles per image)
-NOW SUPPORTS DUAL MODEL COMPARISON (Custom + Transfer-Learning)
-
-1. Searches Train, Val, and Test splits for original images.
-2. Performs inference on individual tiles using BOTH models.
-3. Filters detections: only keeps cells with >40% area in valid mini-tiles.
-4. Merges tiles back into a single large image for visualization with MASKS.
-5. Shows segmentation on original GT images.
-6. Compares predictions from both models side-by-side.
-
-USAGE EXAMPLES:
-
-Single model visualization (GT + Model):
-    python src/visualize.py \
-        --model1_path models/transfer_learning_model.pth \
-        --model1_type maskrcnn \
-        --model1_name "Transfer-Learning"
-
-Dual model visualization (GT + Transfer-Learning + Custom):
-    python src/visualize.py \
-        --model1_path models/transfer_learning_model.pth \
-        --model1_type maskrcnn \
-        --model1_name "Transfer-Learning" \
-        --model2_path models/custom_model.pth \
-        --model2_type custom \
-        --model2_name "Custom"
-"""
-
 import os
 import torch
 import numpy as np
@@ -51,11 +21,10 @@ N_MINI_ROWS = 7  # Number of mini-tile rows in the grid (7 for 5x5 tiles)
 TILE_SIZE = 3    # Each tile is TILE_SIZE x TILE_SIZE mini-tiles (3x3)
 N_TILES_COL = N_MINI_COLS - TILE_SIZE + 1  # Number of tile positions horizontally (7-3+1 = 5)
 N_TILES_ROW = N_MINI_ROWS - TILE_SIZE + 1  # Number of tile positions vertically (7-3+1 = 5)
-TOTAL_TILES = N_TILES_COL * N_TILES_ROW  # 5x5 = 25 total tiles
+TOTAL_TILES = N_TILES_COL * N_TILES_ROW
 
 
 def load_model(model_path, model_type='custom', num_classes=2, device='cuda'):
-    """Load trained model."""
     print(f"Loading {model_type} model from {model_path}...")
     
     if model_type == 'custom':
@@ -70,15 +39,12 @@ def load_model(model_path, model_type='custom', num_classes=2, device='cuda'):
         else:
             model.load_state_dict(checkpoint)
     
-    elif model_type == 'maskrcnn':
-        # Load pretrained Mask R-CNN model
+    elif model_type == 'transfer':
         model = maskrcnn_resnet50_fpn(pretrained=False)
         
-        # Replace the box predictor
         in_features = model.roi_heads.box_predictor.cls_score.in_features
         model.roi_heads.box_predictor = FastRCNNPredictor(in_features, num_classes)
         
-        # Replace the mask predictor
         in_features_mask = model.roi_heads.mask_predictor.conv5_mask.in_channels
         hidden_layer = 256
         model.roi_heads.mask_predictor = MaskRCNNPredictor(
@@ -100,14 +66,11 @@ def load_model(model_path, model_type='custom', num_classes=2, device='cuda'):
     model.to(device)
     model.eval()
     
-    print(f"✓ Model loaded successfully")
     return model
 
 
 def group_tiles_by_image(test_dir):
-    """Group tile filenames by their base image name."""
     tiles_by_image = defaultdict(list)
-    # Pattern to match: filename_tile_01.png or filename_tile_00.png
     pattern = re.compile(r'^(.+)_tile_(\d{2})\.png$')
     
     if not os.path.exists(test_dir):
@@ -135,35 +98,12 @@ def group_tiles_by_image(test_dir):
 
 
 def get_tile_position_in_grid(tile_num):
-    """
-    Calculate the position of a tile in the NxN mini-tile grid.
-    
-    For 7x7 grid with 3x3 sliding window: 5x5 = 25 tiles total
-    Each tile starts at position (col_start, row_start) in mini-tile coordinates
-    
-    Args:
-        tile_num: Tile index (0-24 for 5x5 grid)
-    
-    Returns:
-        (col_start, row_start): Starting position in mini-tile grid
-    """
     row_start = tile_num // N_TILES_COL
     col_start = tile_num % N_TILES_COL
     return col_start, row_start
 
 
 def calculate_mask_area_in_region(mask, region, tile_offset):
-    """
-    Calculate what fraction of a mask's area lies within a region.
-    
-    Args:
-        mask: Binary mask (H, W) - already in tile-local coordinates
-        region: (x_min, y_min, x_max, y_max) in GLOBAL coordinates
-        tile_offset: (tile_x_offset, tile_y_offset) - tile's position in global image
-    
-    Returns:
-        Fraction of mask area inside region (0.0 to 1.0)
-    """
     tile_x_offset, tile_y_offset = tile_offset
     
     # Convert region from global to tile-local coordinates
@@ -192,7 +132,6 @@ def calculate_mask_area_in_region(mask, region, tile_offset):
 
 @torch.no_grad()
 def predict_on_tiles(model, tiles_info, device, transform):
-    """Make predictions on all tiles of an image."""
     model.eval()
     results = []
     for tile_info in tiles_info:
@@ -210,21 +149,8 @@ def predict_on_tiles(model, tiles_info, device, transform):
 
 
 def get_valid_mini_tiles_for_tile(tile_num):
-    """
-    Determine which mini-tiles should be processed for a given tile.
-    Returns mini-tiles that are either:
-    1. On the border of the NxN grid (row=0, row=N-1, col=0, or col=N-1), OR
-    2. The center mini-tile of this 3x3 tile (position [1,1] within the tile)
-    
-    Args:
-        tile_num: Tile index (0 to TOTAL_TILES-1)
-    
-    Returns:
-        List of (mini_col, mini_row) tuples to process for this tile
-    """
     col_start, row_start = get_tile_position_in_grid(tile_num)
     
-    # This tile covers mini-tiles [col_start:col_start+3, row_start:row_start+3]
     valid_mini_tiles = []
     
     for local_row in range(TILE_SIZE):
@@ -239,7 +165,6 @@ def get_valid_mini_tiles_for_tile(tile_num):
             is_on_border = (mini_col == 0 or mini_col == N_MINI_COLS - 1 or 
                            mini_row == 0 or mini_row == N_MINI_ROWS - 1)
             
-            # Include if it's center OR on border
             if is_center or is_on_border:
                 valid_mini_tiles.append((mini_col, mini_row))
     
@@ -247,28 +172,11 @@ def get_valid_mini_tiles_for_tile(tile_num):
 
 
 def filter_detections_by_border_mini_tiles(results, score_threshold=0.5, mask_threshold=0.4):
-    """
-    Filter detections to only keep those with >mask_threshold area in valid mini-tiles.
-    Valid mini-tiles are those that are either:
-    1. On the border of the grid, OR
-    2. The center mini-tile of their respective 3x3 tile
-    
-    Processes tiles in order, avoiding duplicates by tracking which mini-tiles have been processed.
-    
-    Args:
-        results: List of tile prediction results
-        score_threshold: Minimum confidence score
-        mask_threshold: Minimum fraction of mask area in valid mini-tiles (default: 0.4 = 40%)
-    
-    Returns:
-        List of filtered detections with global coordinates
-    """
-    # Calculate mini-tile dimensions
     mini_tile_width = IMG_WIDTH // N_MINI_COLS
     mini_tile_height = IMG_HEIGHT // N_MINI_ROWS
     
     filtered_detections = []
-    processed_mini_tiles = set()  # Track which mini-tiles we've already processed
+    processed_mini_tiles = set()
     
     # Sort results by tile_num to ensure consistent processing order
     sorted_results = sorted(results, key=lambda x: x['tile_num'])
@@ -277,7 +185,6 @@ def filter_detections_by_border_mini_tiles(results, score_threshold=0.5, mask_th
         tile_num = result['tile_num']
         pred = result['prediction']
         
-        # Get tile position in grid
         col_start, row_start = get_tile_position_in_grid(tile_num)
         
         # Calculate tile offset in global coordinates
@@ -287,13 +194,11 @@ def filter_detections_by_border_mini_tiles(results, score_threshold=0.5, mask_th
         # Get valid mini-tiles for this tile (border OR center mini-tiles not yet processed)
         valid_mini_tiles = get_valid_mini_tiles_for_tile(tile_num)
         
-        # Filter out mini-tiles that have already been processed
         new_mini_tiles = [mt for mt in valid_mini_tiles if mt not in processed_mini_tiles]
         
         if not new_mini_tiles:
             continue
         
-        # Filter by score first
         keep = pred['scores'] > score_threshold
         boxes = pred['boxes'][keep]
         masks = pred['masks'][keep]
@@ -347,14 +252,12 @@ def filter_detections_by_border_mini_tiles(results, score_threshold=0.5, mask_th
                     'mini_tile': new_mini_tiles  # Store all valid mini-tiles
                 })
         
-        # Mark these mini-tiles as processed
         processed_mini_tiles.update(new_mini_tiles)
     
     return filtered_detections
 
 
 def load_coco_annotations(json_path):
-    """Load COCO format annotations."""
     with open(json_path, 'r') as f:
         coco_data = json.load(f)
     images_dict = {img['id']: img['file_name'] for img in coco_data['images']}
@@ -368,7 +271,6 @@ def load_coco_annotations(json_path):
 
 
 def find_original_image(base_name, images_dict):
-    """Find the original image filename across all splits."""
     for filename in images_dict.values():
         name_without_ext = os.path.splitext(filename)[0]
         if base_name == name_without_ext or base_name == filename:
@@ -377,20 +279,9 @@ def find_original_image(base_name, images_dict):
 
 
 def reconstruct_full_image(results):
-    """
-    Reconstruct full image from tiles.
-    
-    Args:
-        results: List of tile prediction results
-    
-    Returns:
-        Reconstructed image as numpy array
-    """
-    # Calculate mini-tile dimensions
     mini_tile_width = IMG_WIDTH // N_MINI_COLS
     mini_tile_height = IMG_HEIGHT // N_MINI_ROWS
     
-    # Create full image canvas
     full_canvas = np.zeros((IMG_HEIGHT, IMG_WIDTH, 3))
     tile_coverage = np.zeros((IMG_HEIGHT, IMG_WIDTH), dtype=bool)
     
@@ -419,15 +310,6 @@ def reconstruct_full_image(results):
 
 
 def create_mask_overlay(filtered_detections):
-    """
-    Create a mask overlay from filtered detections.
-    
-    Args:
-        filtered_detections: List of detection dictionaries
-    
-    Returns:
-        RGBA mask overlay
-    """
     mask_canvas = np.zeros((IMG_HEIGHT, IMG_WIDTH, 4))
     
     for idx, det in enumerate(filtered_detections):
@@ -437,7 +319,6 @@ def create_mask_overlay(filtered_detections):
         # Create colored mask
         color = plt.cm.tab20(idx % 20)
         
-        # Place mask on canvas at correct global position
         mask_h, mask_w = mask.shape
         
         # Calculate where the mask should be placed on the canvas
@@ -467,15 +348,6 @@ def create_mask_overlay(filtered_detections):
 
 
 def create_gt_mask_overlay(annotations):
-    """
-    Create ground truth mask overlay from COCO annotations.
-    
-    Args:
-        annotations: List of COCO annotations
-    
-    Returns:
-        RGBA mask overlay for ground truth
-    """
     mask_overlay = np.zeros((IMG_HEIGHT, IMG_WIDTH, 4))
     
     instance_counter = 0
@@ -504,7 +376,6 @@ def create_gt_mask_overlay(annotations):
             colored_mask[binary_mask > 0] = color
             colored_mask[binary_mask > 0, 3] = 0.5  # Set alpha
             
-            # Add to overlay
             mask_overlay = np.maximum(mask_overlay, colored_mask)
             instance_counter += 1
     
@@ -514,25 +385,12 @@ def create_gt_mask_overlay(annotations):
 def visualize_with_ground_truth(base_name, original_img_path, annotations, 
                                 results_list, model_names,
                                 save_dir='outputs', score_threshold=0.5, mask_threshold=0.4):
-    """
-    Visualize ground truth and model predictions in a single figure.
-    
-    Args:
-        base_name: Base name of the image
-        original_img_path: Path to original image for GT
-        annotations: COCO annotations for ground truth
-        results_list: List of prediction results (one per model)
-        model_names: List of model names (one per model)
-        save_dir: Directory to save visualization
-        score_threshold: Score threshold for filtering
-        mask_threshold: Mask threshold for filtering
-    """
+
     os.makedirs(save_dir, exist_ok=True)
     
     num_models = len(results_list)
-    num_plots = 1 + num_models  # GT + predictions
+    num_plots = 1 + num_models
     
-    # Load original image for GT
     try:
         original_img = Image.open(original_img_path).convert('RGB')
         original_img_np = np.array(original_img)
@@ -540,10 +398,8 @@ def visualize_with_ground_truth(base_name, original_img_path, annotations,
         print(f"  Warning: Could not load original image for GT: {e}")
         original_img_np = None
     
-    # Reconstruct image from tiles for predictions
     full_canvas = reconstruct_full_image(results_list[0])
     
-    # Create figure
     fig, axes = plt.subplots(1, num_plots, figsize=(10 * num_plots, 10))
     if num_plots == 1:
         axes = [axes]
@@ -559,23 +415,21 @@ def visualize_with_ground_truth(base_name, original_img_path, annotations,
         axes[0].set_title(f"Ground Truth: {base_name}", fontsize=12)
     axes[0].axis('off')
     
-    # Plot predictions for each model
+    # Plot 2: Model Predictions
     for idx, (results, model_name) in enumerate(zip(results_list, model_names)):
         ax = axes[idx + 1]
         
-        # Filter detections
         filtered_det = filter_detections_by_border_mini_tiles(
             results, score_threshold, mask_threshold
         )
         
-        # Show image
         ax.imshow(full_canvas)
         
         if filtered_det:
             mask_overlay = create_mask_overlay(filtered_det)
             ax.imshow(mask_overlay)
             
-            # Add confidence scores
+            # add confidence scores
             for det in filtered_det:
                 mask = det['mask']
                 offset_x, offset_y = det['offset']
@@ -602,25 +456,25 @@ def visualize_with_ground_truth(base_name, original_img_path, annotations,
     save_path = os.path.join(save_dir, f'{base_name}_GT_VS_PREDICTIONS.png')
     plt.savefig(save_path, dpi=200, bbox_inches='tight')
     plt.close()
-    print(f"✓ Saved GT vs Predictions: {save_path}")
+    print(f"Saved GT vs Predictions: {save_path}")
 
 
 def main():
     import argparse
     
     parser = argparse.ArgumentParser(description='Mask R-CNN dual model inference with tiled images')
-    parser.add_argument('--model1_path', type=str, default='models/custom_maskrcnn_10epochs.pth',
+    parser.add_argument('--model1_path', type=str, default='models/custom_maskrcnn_5epochs.pth',
                         help='Path to first model .pth file')
-    parser.add_argument('--model1_type', type=str, default='custom', choices=['custom', 'maskrcnn'],
-                        help='Type of first model (custom or maskrcnn)')
+    parser.add_argument('--model1_type', type=str, default='custom', choices=['custom', 'transfer'],
+                        help='Type of first model (custom or transfer)')
     parser.add_argument('--model1_name', type=str, default='Custom Model',
                         help='Display name for first model')
     
     parser.add_argument('--model2_path', type=str, default=None,
                         help='Path to second model .pth file (optional)')
-    parser.add_argument('--model2_type', type=str, default='maskrcnn', choices=['custom', 'maskrcnn'],
-                        help='Type of second model (custom or maskrcnn)')
-    parser.add_argument('--model2_name', type=str, default='Transfer-Learning Model',
+    parser.add_argument('--model2_type', type=str, default='transfer', choices=['custom', 'transfer'],
+                        help='Type of second model (custom or transfer)')
+    parser.add_argument('--model2_name', type=str, default='Transfer Learning Model',
                         help='Display name for second model')
     
     parser.add_argument('--test_dir', type=str, default='data_split/test/images',
@@ -635,18 +489,15 @@ def main():
     
     args = parser.parse_args()
     
-    print("=" * 80)
-    print(f"Mask R-CNN: Dual Model Inference ({N_MINI_COLS}x{N_MINI_ROWS} Grid + {TILE_SIZE}x{TILE_SIZE} Window = {TOTAL_TILES} Tiles)")
-    print("=" * 80)
+    print("\nVisualization\n")
     print(f"Model 1 ({args.model1_name}): {args.model1_path} (type: {args.model1_type})")
     if args.model2_path:
         print(f"Model 2 ({args.model2_name}): {args.model2_path} (type: {args.model2_type})")
     print(f"Test directory: {args.test_dir}")
     print(f"Score threshold: {args.score_threshold}")
     print(f"Mask threshold: {args.mask_threshold} ({args.mask_threshold*100:.0f}%)")
-    print("=" * 80)
     
-    # Configuration
+
     test_dir = args.test_dir
     num_classes = 2
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -657,12 +508,12 @@ def main():
         {'name': 'Val', 'images': 'data/val/images', 'ann': 'data/annotations/livecell_coco_val.json'}
     ]
     
-    # 1. Load All Metadata
+
     global_ann_by_image = {}
     global_images_dict = {}
     filename_to_dir = {}
 
-    print("\nSearching across all splits for metadata...")
+
     for split in data_splits:
         if os.path.exists(split['ann']):
             anns, imgs = load_coco_annotations(split['ann'])
@@ -670,14 +521,12 @@ def main():
             global_images_dict.update(imgs)
             for fname in imgs.values():
                 filename_to_dir[fname] = split['images']
-            print(f"✓ Found {split['name']} data.")
 
-    # 2. Group Tiles
+
     tiles_by_image = group_tiles_by_image(test_dir)
-    print(f"\nProcessing {len(tiles_by_image)} image sets found in {test_dir}...")
+    print(f"\nProcessing {len(tiles_by_image)} image sets found in {test_dir}")
 
-    # 3. Load Models
-    print("\nLoading models...")
+
     model1 = load_model(args.model1_path, args.model1_type, num_classes, device)
     
     model2 = None
@@ -685,13 +534,11 @@ def main():
         model2 = load_model(args.model2_path, args.model2_type, num_classes, device)
         print()
 
-    # 4. Run Process
     transform = transforms.Compose([transforms.ToTensor()])
     
     for base_name, tiles_info in tiles_by_image.items():
-        print(f"\nWorking on: {base_name} ({len(tiles_info)} tiles)")
+        print(f"\nWorking on: {base_name}")
         
-        # Find original image path and annotations
         original_filename = find_original_image(base_name, global_images_dict)
         original_img_path = None
         annotations = []
@@ -702,22 +549,16 @@ def main():
                 original_img_path = orig_path
                 annotations = global_ann_by_image.get(original_filename, [])
         
-        # Inference with Model 1
-        print(f"  Running inference with {args.model1_name}...")
         results_model1 = predict_on_tiles(model1, tiles_info, device, transform)
         
-        # Prepare results list and model names
         results_list = [results_model1]
         model_names = [args.model1_name]
         
-        # If second model is provided
         if model2:
-            print(f"  Running inference with {args.model2_name}...")
             results_model2 = predict_on_tiles(model2, tiles_info, device, transform)
             results_list.append(results_model2)
             model_names.append(args.model2_name)
         
-        # Generate unified visualization with GT + predictions
         if results_list[0] and original_img_path:
             visualize_with_ground_truth(
                 base_name, 
@@ -730,9 +571,8 @@ def main():
                 mask_threshold=args.mask_threshold
             )
 
-    print("\n" + "=" * 80)
-    print("ALL DONE. Check the 'outputs/' folder for visualizations.")
-    print("=" * 80)
+
+    print("\nFinished. Visualizations saved to", args.output_dir)
 
 
 if __name__ == "__main__":

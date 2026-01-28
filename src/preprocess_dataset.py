@@ -14,13 +14,6 @@ TILES_PER_IMAGE = 25  # Number of tiles to generate per image (7x7 grid with 3x3
 
 
 class LIVECellPreprocessor:
-    """
-    Preprocesses LIVECell dataset by:
-    1. Selecting specific counts of images (70/15/15 split of total)
-    2. Sorting alphabetically for deterministic selection
-    3. Tiling large images into smaller patches using configurable grid + 3x3 sliding window
-    4. Remapping annotations to tiles
-    """
 
     def __init__(
         self,
@@ -29,38 +22,22 @@ class LIVECellPreprocessor:
         total_images: int = 100,
         tiles_per_image: int = TILES_PER_IMAGE,
         tile_overlap: int = 50,
-    ):
-        """
-        Args:
-            source_dir: Original LIVECell data directory
-            output_dir: Where to save preprocessed data
-            total_images: TOTAL number of images to use across all splits
-            tiles_per_image: How many tiles to create per image (determines grid size)
-            tile_overlap: Overlap between adjacent tiles in pixels - NOTE: now determined by 3x3 window
-        """
+    ):  
         self.source_dir = Path(source_dir)
         self.output_dir = Path(output_dir)
         self.total_images = total_images
-        self.tiles_per_image = TILES_PER_IMAGE  # Always use the constant
+        self.tiles_per_image = TILES_PER_IMAGE
         self.tile_overlap = tile_overlap
         
-        # Calculate grid size based on tiles_per_image
-        # Formula: tiles = (grid_size - 2)^2 for 3x3 sliding window
-        # So: grid_size = sqrt(tiles) + 2
+
         self.grid_size = int(math.sqrt(tiles_per_image)) + 2
         
-        # Recalculate actual tiles that will be generated
         self.actual_tiles = (self.grid_size - 2) ** 2
         
-        print(f"Grid configuration:")
-        print(f"  - Requested tiles per image: {tiles_per_image}")
-        print(f"  - Grid size: {self.grid_size}x{self.grid_size}")
-        print(f"  - Actual tiles per image: {self.actual_tiles}")
+        print(f"\nPreprocessing. Tiles per image: {self.actual_tiles}")
 
-        # Calculate limits per split based on 70/15/15 ratio
         n_train = int(self.total_images * 0.70)
         n_val = int(self.total_images * 0.15)
-        # Assign remainder to test to ensure sum equals total_images exactly
         n_test = self.total_images - n_train - n_val
 
         self.split_limits = {
@@ -77,22 +54,14 @@ class LIVECellPreprocessor:
         self._detect_structure()
 
     def _detect_structure(self):
-        """
-        Auto-detect LIVECell dataset structure.
-        """
-        print(f"\nDetecting dataset structure in {self.source_dir}...")
-
         self.annotations_dir = self.source_dir / "annotations"
 
-        # Split structure: train/val/test images
         if (self.source_dir / "train" / "images").exists():
             self.images_dirs = {
                 "train": self.source_dir / "train" / "images",
                 "val": self.source_dir / "val" / "images",
                 "test": self.source_dir / "test" / "images",
             }
-            print("  ✓ Detected split structure: train/val/test images/")
-        # Flat structure: single images/ dir
         elif (self.source_dir / "images").exists():
             flat_dir = self.source_dir / "images"
             self.images_dirs = {
@@ -100,14 +69,8 @@ class LIVECellPreprocessor:
                 "val": flat_dir,
                 "test": flat_dir,
             }
-            print("  ✓ Detected flat structure: images/")
         else:
-            raise ValueError(
-                f"Cannot detect valid LIVECell structure in {self.source_dir}\n"
-                f"Expected either:\n"
-                f"  - {self.source_dir}/images/\n"
-                f"  - {self.source_dir}/train/images/, val/images/, test/images/"
-            )
+            raise ValueError(f"Cannot detect valid LIVECell structure in {self.source_dir}\n")
 
         self.split_ann_files = {
             "train": self.annotations_dir / "livecell_coco_train.json",
@@ -119,20 +82,11 @@ class LIVECellPreprocessor:
             if not ann_path.exists():
                 raise ValueError(f"Missing annotation file for {split}: {ann_path}")
 
+
     def calculate_tile_grid(self, img_width: int, img_height: int) -> Tuple[int, int, int, int]:
-        """
-        Calculate grid of mini-tiles based on self.grid_size.
-        
-        Returns:
-            mini_tile_width: Width of each mini-tile
-            mini_tile_height: Height of each mini-tile
-            n_mini_cols: Number of mini-tile columns
-            n_mini_rows: Number of mini-tile rows
-        """
         n_mini_cols = self.grid_size
         n_mini_rows = self.grid_size
 
-        # Calculate mini-tile dimensions
         mini_tile_width = img_width // n_mini_cols
         mini_tile_height = img_height // n_mini_rows
 
@@ -147,32 +101,12 @@ class LIVECellPreprocessor:
         n_mini_cols: int,
         n_mini_rows: int,
     ) -> List[Tuple[int, int, int, int]]:
-        """
-        Generate tile coordinates using 3x3 sliding window over mini-tile grid.
         
-        This creates overlapping tiles where each tile spans 3x3 mini-tiles.
-        For a 7x7 grid, this produces 5x5 = 25 tiles total.
-        For an 8x8 grid, this produces 6x6 = 36 tiles total.
-        
-        Args:
-            img_width: Full image width
-            img_height: Full image height
-            mini_tile_width: Width of one mini-tile
-            mini_tile_height: Height of one mini-tile
-            n_mini_cols: Number of mini-tile columns
-            n_mini_rows: Number of mini-tile rows
-            
-        Returns:
-            List of tile coordinates as (x_min, y_min, x_max, y_max)
-        """
         tiles = []
         
-        # Sliding window: 3x3 mini-tiles
         window_size = 3
         
         # Calculate how many positions the window can slide
-        # For 7 mini-tiles and window of 3: positions 0-2, 1-3, 2-4, 3-5, 4-6 = 5 positions
-        # For 8 mini-tiles and window of 3: positions 0-2, 1-3, 2-4, 3-5, 4-6, 5-7 = 6 positions
         n_positions_col = n_mini_cols - window_size + 1
         n_positions_row = n_mini_rows - window_size + 1
         
@@ -269,7 +203,7 @@ class LIVECellPreprocessor:
                 break
 
         if img_path is None:
-            print(f"  ⚠ Image not found: {img_filename}, skipping...")
+            print(f"Image not found: {img_filename}, skipping")
             return []
 
         try:
@@ -277,7 +211,7 @@ class LIVECellPreprocessor:
             if img.mode != "RGB":
                 img = img.convert("RGB")
         except Exception as e:
-            print(f"  ⚠ Failed to load {img_path}: {e}, skipping...")
+            print(f"Failed to load {img_path}: {e}, skipping")
             return []
 
         img_width, img_height = img.size
@@ -329,38 +263,34 @@ class LIVECellPreprocessor:
         return new_images
 
     def preprocess(self):
-        print("=" * 80)
-        print("LIVECell Dataset Preprocessing (7x7 Grid + 3x3 Window)")
-        print("=" * 80)
-
         cocos = {}
         for split, ann_path in self.split_ann_files.items():
             coco = COCO(ann_path)
             cocos[split] = coco
-            print(f"{split}: Loaded metadata for {len(coco.imgs)} potential images")
+            print(f"{split}: Loaded data for {len(coco.imgs)} potential images")
 
         img_counter = {"train": 0, "val": 0, "test": 0}
 
         for split_name, coco in cocos.items():
             target_limit = self.split_limits[split_name]
-            print(f"\nProcessing {split_name} split (Target: {target_limit} images)...")
+            print(f"\nProcessing {split_name} split (Target: {target_limit} images)")
 
             if target_limit == 0:
-                print(f"  ⚠ Skipping {split_name} as target count is 0")
+                print(f"Skipping {split_name} as target count is 0")
                 continue
 
             all_new_images = []
             all_new_annotations = []
 
-            # 1. Get all image objects
+            # Get all image objects
             all_img_ids = coco.getImgIds()
             all_imgs = coco.loadImgs(all_img_ids)
 
-            # 2. Filter images that exist on disk
+            # Filter images that exist on disk
             img_dir = self.images_dirs[split_name]
             valid_imgs = []
-            
-            # Using list comprehension for filtering valid images
+
+            # Filter valid images
             for img in all_imgs:
                 img_filename = img["file_name"]
                 if img_filename.startswith("A172"):
@@ -368,19 +298,14 @@ class LIVECellPreprocessor:
                     if any(p.exists() for p in possible_paths):
                         valid_imgs.append(img)
 
-            # 3. SORT ALPHABETICALLY BY FILE NAME
-            # This ensures that selecting the "first X" is always deterministic
             valid_imgs.sort(key=lambda x: x['file_name'])
 
-            # 4. Select top N images based on calculated limit
             selected_imgs = valid_imgs[:target_limit]
             
-            print(f"  Selected {len(selected_imgs)} images (sorted alphabetically)")
-            print(f"  Will generate ~{self.actual_tiles} tiles per image ({self.grid_size}x{self.grid_size} grid, 3x3 sliding window)")
             if len(selected_imgs) < target_limit:
-                 print(f"  ⚠ Warning: Requested {target_limit} but only found {len(selected_imgs)} valid images")
+                 print(f"Warning: Requested {target_limit} but only found {len(selected_imgs)} valid images")
 
-            # 5. Process the selected images
+            # Process selected images
             for img_info in tqdm(selected_imgs, desc=f"  Tiling {split_name}"):
                 img_id = img_info['id']
                 ann_ids = coco.getAnnIds(imgIds=img_id)
@@ -415,20 +340,18 @@ class LIVECellPreprocessor:
                 json.dump(coco_output, f)
 
             print(
-                f"  ✓ {split_name} Complete: {len(all_new_images)} tiles generated from "
+                f"{split_name} complete: {len(all_new_images)} tiles generated from "
                 f"{len(selected_imgs)} source images."
             )
 
-        print("\n✓ Preprocessing complete!")
-        print(f"Output directory: {self.output_dir}")
+        print(f"\nFinished. Output directory: {self.output_dir}")
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Preprocess LIVECell dataset (deterministic)")
+    parser = argparse.ArgumentParser(description="Preprocess dataset by splitting images")
     parser.add_argument("--source_dir", type=str, default="data", help="Original LIVECell data directory")
     parser.add_argument("--output_dir", type=str, default="data_split", help="Output directory")
     
-    # Updated help text to reflect new behavior
     parser.add_argument(
         "--num_images_per_split", 
         type=int, 
