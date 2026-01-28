@@ -12,7 +12,7 @@
 
 **Instance segmentation of live cells using custom Mask R-CNN with ResNet-18 backbone**
 
-[Dataset](https://sartorius-research.github.io/LIVECell/) • [Report Bug](https://github.com/jakubradziejewski/livecell-instance-segmentation/issues) • [Request Feature](https://github.com/jakubradziejewski/livecell-instance-segmentation/issues)
+[Dataset](https://sartorius-research.github.io/LIVECell/) • [Report Bug](https://github.com/jakubradziejewski/livecell-instance-segmentation/issues) 
 
 </div>
 
@@ -107,16 +107,25 @@ docker compose exec training bash
 
 ---
 
-### 2. Setup Data Versioning (DVC)
+### 2. Download Dataset
 
-DVC is used to version and store the dataset on Google Drive. For detailed setup instructions, see **[DVC.md](DVC.md)**.
+#### Download Directly from Source
+```bash
+# Inside the container
+python scripts/download_data.py
+```
 
-**Quick Summary:**
-1. Create Google OAuth credentials
-2. Create a Google Drive folder for storage
-3. Configure DVC remote in `.dvc/config`
-4. Authenticate with Google Drive
-5. Pull the dataset: `dvc pull`
+This will automatically:
+- Download annotation files for train/val/test splits
+- Download and extract all microscopy images (~8GB)
+- Organize images into proper directory structure
+
+#### Optional: Setup Your Own DVC Storage
+
+If you want to set up your own data versioning with DVC and Google Drive for tracking dataset changes, see **[DVC.md](DVC.md)** for detailed instructions on:
+- Creating your own Google OAuth credentials
+- Setting up your own Google Drive storage
+- Configuring DVC for version control
 
 ---
 
