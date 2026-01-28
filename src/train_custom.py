@@ -76,9 +76,8 @@ def train_one_epoch(model, dataloader, optimizer, device, epoch):
         optimizer.zero_grad()
         losses.backward()
         
-        # === TRAINING DYNAMIC 1: GRADIENT NORM ===
-        # Why: Tells us if gradients are healthy
-        # How: Calculate L2 norm of all gradients
+        # TRAINING DYNAMIC 1: GRADIENT NORM
+        # Calculate L2 norm of all gradients
         total_norm = 0.0
         for p in model.parameters():
             if p.grad is not None:
@@ -90,14 +89,13 @@ def train_one_epoch(model, dataloader, optimizer, device, epoch):
         
         optimizer.step()
         
-        # === TRAINING DYNAMIC 2: LEARNING RATE ===
-        # Why: Shows optimizer's current step size
-        # How: Extract from optimizer's parameter groups
+        # TRAINING DYNAMIC 2: LEARNING RATE
+        # Extract from optimizer's parameter groups
         current_lr = optimizer.param_groups[0]['lr']
         learning_rates.append(current_lr)
         
-        # === TRAINING DYNAMIC 3: MEMORY USAGE ===
-        # Why: Monitor GPU memory to prevent OOM
+        # TRAINING DYNAMIC 3: MEMORY USAGE
+        # Monitor GPU memory to prevent OOM
         # How: Query CUDA for current memory usage
         if torch.cuda.is_available():
             memory_mb = torch.cuda.max_memory_allocated(device) / (1024 ** 2)
