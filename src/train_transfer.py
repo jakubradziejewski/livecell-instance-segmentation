@@ -1,11 +1,6 @@
-"""
-Simple Mask R-CNN Training and Testing Script
-Uses ResNet-50 backbone with pretrained weights from COCO
-Train on train set, validate on val set, test on test set
-"""
-
 import os
 import sys
+import time
 import torch
 import torchvision
 from torchvision.models.detection import maskrcnn_resnet50_fpn
@@ -18,23 +13,11 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 from tqdm import tqdm
 
-# Import our dataset
 sys.path.append('src')
 from dataset import get_dataloaders
 
 
 def get_model_maskrcnn(num_classes, pretrained=True):
-    """
-    Load Mask R-CNN model with ResNet-50-FPN backbone.
-    (ResNet-18 is not available in torchvision's Mask R-CNN, so using ResNet-50)
-    
-    Args:
-        num_classes: Number of classes (including background)
-        pretrained: Whether to use COCO pretrained weights
-        
-    Returns:
-        model: Mask R-CNN model
-    """
     # Load pretrained Mask R-CNN model
     model = maskrcnn_resnet50_fpn(pretrained=pretrained)
     
@@ -54,29 +37,54 @@ def get_model_maskrcnn(num_classes, pretrained=True):
     return model
 
 
-def train_one_epoch(model, dataloader, optimizer, device, epoch):
-    """
-    Train for one epoch.
+def freeze_backbone(model):
+    for param in model.backbone.parameters():
+        param.requires_grad = False
     
-    Args:
-        model: Mask R-CNN model
-        dataloader: Training dataloader
-        optimizer: Optimizer
-        device: Device to train on
-        epoch: Current epoch number
-        
-    Returns:
-        metrics: Dictionary of training metrics
-    """
+    for param in model.rpn.parameters():
+        param.requires_grad = False
+
+
+def unfreeze_backbone(model):
+    for param in model.backbone.parameters():
+        param.requires_grad = True
+    
+    for param in model.rpn.parameters():
+        param.requires_grad = True
+
+
+def count_parameters(model):
+    total_params = sum(p.numel() for p in model.parameters())
+    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    return total_params, trainable_params
+
+
+def compute_gradient_norm(model):
+    total_norm = 0.0
+    for p in model.parameters():
+        if p.grad is not None:
+            param_norm = p.grad.data.norm(2)
+            total_norm += param_norm.item() ** 2
+    total_norm = total_norm ** 0.5
+    return total_norm
+
+
+def train_one_epoch(model, dataloader, optimizer, device, epoch, stage=""):
     model.train()
+    
+    epoch_start_time = time.time()
+    
     total_loss = 0
     loss_classifier = 0
     loss_box_reg = 0
     loss_mask = 0
     loss_objectness = 0
     loss_rpn_box_reg = 0
+    gradient_norms = []
+    all_preds_per_image = []
     
-    progress_bar = tqdm(dataloader, desc=f"Training Epoch {epoch}")
+    stage_prefix = f"{stage} - " if stage else ""
+    progress_bar = tqdm(dataloader, desc=f"{stage_prefix}Training Epoch {epoch}")
     
     for batch_idx, (images, targets) in enumerate(progress_bar):
         # Move to device
@@ -98,17 +106,37 @@ def train_one_epoch(model, dataloader, optimizer, device, epoch):
         # Backward pass
         optimizer.zero_grad()
         losses.backward()
+        
+        # Compute gradient norm AFTER backward, BEFORE optimizer step
+        grad_norm = compute_gradient_norm(model)
+        gradient_norms.append(grad_norm)
+        
         optimizer.step()
+        
+        # Track predictions per image (inference mode to get actual predictions)
+        with torch.no_grad():
+            model.eval()
+            sample_preds = model(images)
+            model.train()
+            
+            # Count predictions above threshold per image
+            for pred in sample_preds:
+                num_preds = (pred['scores'] > 0.5).sum().item()
+                all_preds_per_image.append(num_preds)
         
         # Update progress bar
         progress_bar.set_postfix({
             'loss': losses.item(),
-            'avg_loss': total_loss / (batch_idx + 1)
+            'avg_loss': total_loss / (batch_idx + 1),
+            'grad_norm': grad_norm
         })
         
         # Free memory
-        del images, targets, loss_dict, losses
+        del images, targets, loss_dict, losses, sample_preds
         torch.cuda.empty_cache()
+    
+    # End timing
+    epoch_time = time.time() - epoch_start_time
     
     n = len(dataloader)
     metrics = {
@@ -118,6 +146,11 @@ def train_one_epoch(model, dataloader, optimizer, device, epoch):
         'loss_mask': loss_mask / n,
         'loss_objectness': loss_objectness / n,
         'loss_rpn_box_reg': loss_rpn_box_reg / n,
+        # Training dynamics metrics
+        'gradient_norm': np.mean(gradient_norms),
+        'gradient_norm_std': np.std(gradient_norms),
+        'avg_predictions_per_image': np.mean(all_preds_per_image) if all_preds_per_image else 0.0,
+        'epoch_time_seconds': epoch_time,
     }
     
     return metrics
@@ -125,18 +158,6 @@ def train_one_epoch(model, dataloader, optimizer, device, epoch):
 
 @torch.no_grad()
 def evaluate(model, dataloader, device, iou_threshold=0.5):
-    """
-    Evaluate model on validation/test set.
-    
-    Args:
-        model: Mask R-CNN model
-        dataloader: Dataloader
-        device: Device
-        iou_threshold: IoU threshold for matching predictions to ground truth
-        
-    Returns:
-        metrics: Dictionary of evaluation metrics
-    """
     model.eval()
     
     all_ious = []
@@ -149,19 +170,15 @@ def evaluate(model, dataloader, device, iou_threshold=0.5):
     progress_bar = tqdm(dataloader, desc="Evaluating")
     
     for images, targets in progress_bar:
-        # Move to device
         images_device = [img.to(device) for img in images]
         
-        # Predict
         predictions = model(images_device)
         
-        # Calculate metrics for each image
         for pred, target in zip(predictions, targets):
             gt_boxes = target['boxes']
             pred_boxes = pred['boxes'].cpu()
             pred_scores = pred['scores'].cpu()
             
-            # Filter predictions by score threshold
             keep = pred_scores > 0.5
             pred_boxes = pred_boxes[keep]
             pred_scores = pred_scores[keep]
@@ -172,7 +189,6 @@ def evaluate(model, dataloader, device, iou_threshold=0.5):
             if len(gt_boxes) == 0 or len(pred_boxes) == 0:
                 continue
             
-            # Calculate IoU matrix
             iou_matrix = box_iou(pred_boxes, gt_boxes)
             
             # For each prediction, find best matching ground truth
@@ -180,22 +196,18 @@ def evaluate(model, dataloader, device, iou_threshold=0.5):
                 max_ious, max_indices = iou_matrix.max(dim=1)
                 all_ious.extend(max_ious.tolist())
                 
-                # Count true positives (IoU > threshold)
                 true_positives = (max_ious > iou_threshold).sum().item()
                 total_true_positives += true_positives
                 
-                # Precision and recall for this image
                 precision = true_positives / len(pred_boxes) if len(pred_boxes) > 0 else 0
                 recall = true_positives / len(gt_boxes) if len(gt_boxes) > 0 else 0
                 
                 all_precisions.append(precision)
                 all_recalls.append(recall)
         
-        # Free memory
         del images_device, predictions
         torch.cuda.empty_cache()
     
-    # Calculate overall metrics
     metrics = {
         'mean_iou': np.mean(all_ious) if all_ious else 0.0,
         'mean_precision': np.mean(all_precisions) if all_precisions else 0.0,
@@ -205,7 +217,6 @@ def evaluate(model, dataloader, device, iou_threshold=0.5):
         'total_true_positives': total_true_positives,
     }
     
-    # Calculate F1 score
     if metrics['mean_precision'] + metrics['mean_recall'] > 0:
         metrics['f1_score'] = 2 * (metrics['mean_precision'] * metrics['mean_recall']) / \
                               (metrics['mean_precision'] + metrics['mean_recall'])
@@ -217,18 +228,6 @@ def evaluate(model, dataloader, device, iou_threshold=0.5):
 
 @torch.no_grad()
 def predict(model, dataloader, device, num_samples=5):
-    """
-    Make predictions on samples from dataloader.
-    
-    Args:
-        model: Mask R-CNN model
-        dataloader: Dataloader to get samples from
-        device: Device to run inference on
-        num_samples: Number of samples to predict
-        
-    Returns:
-        results: List of (image, prediction, target) tuples
-    """
     model.eval()
     results = []
     
@@ -236,13 +235,10 @@ def predict(model, dataloader, device, num_samples=5):
         if len(results) >= num_samples:
             break
         
-        # Move to device
         images_device = [img.to(device) for img in images]
         
-        # Predict
         predictions = model(images_device)
         
-        # Collect results
         for img, pred, target in zip(images, predictions, targets):
             if len(results) >= num_samples:
                 break
@@ -253,7 +249,6 @@ def predict(model, dataloader, device, num_samples=5):
                 'target': {k: v.cpu() for k, v in target.items()}
             })
         
-        # Free memory
         del images_device, predictions
         torch.cuda.empty_cache()
     
@@ -261,14 +256,6 @@ def predict(model, dataloader, device, num_samples=5):
 
 
 def visualize_predictions(results, save_dir='outputs', dataset_name='test'):
-    """
-    Visualize predictions and save to disk.
-    
-    Args:
-        results: List of prediction results
-        save_dir: Directory to save visualizations
-        dataset_name: Name of dataset (for filenames)
-    """
     os.makedirs(save_dir, exist_ok=True)
     
     for idx, result in enumerate(results):
@@ -351,35 +338,32 @@ def visualize_predictions(results, save_dir='outputs', dataset_name='test'):
 
 
 def main():
-    """
-    Main training and testing script.
-    """
-    print("=" * 80)
-    print("Mask R-CNN Instance Segmentation")
-    print("Train on TRAIN, validate on VAL, test on TEST")
-    print("=" * 80)
+    print("Mask R-CNN Transfer Learning")
+    print("Stage 1: Freeze backbone, train prediction heads")
+    print("Stage 2: Unfreeze backbone, fine-tune entire network")
     
-    # Configuration
+
     data_dir = 'data_split'
     batch_size = 2  # Small batch size for 4GB GPU
     num_workers = 2
-    lr = 0.001
-    num_epochs = 1
-    num_classes = 2  # Background + cell (instance segmentation with 1 class!)
+    lr_stage1 = 0.005
+    lr_stage2 = 0.001 
+    num_epochs_stage1 = 3 
+    num_epochs_stage2 = 2
+    num_classes = 2  # Background + cell
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     
     print(f"\nConfiguration:")
     print(f"  Device: {device}")
     print(f"  Batch size: {batch_size}")
-    print(f"  Learning rate: {lr}")
-    print(f"  Epochs: {num_epochs}")
+    print(f"  Stage 1 - LR: {lr_stage1}, Epochs: {num_epochs_stage1} (heads only)")
+    print(f"  Stage 2 - LR: {lr_stage2}, Epochs: {num_epochs_stage2} (full fine-tuning)")
     print(f"  Num classes: {num_classes} (background + cell)")
     print(f"  Task: Instance Segmentation (distinguishing individual cells)")
     print()
     
-    # Load data
-    print("Loading datasets...")
-    print("-" * 80)
+
+    print("Loading datasets")
     dataloaders = get_dataloaders(
         root_dir=data_dir,
         batch_size=batch_size,
@@ -396,58 +380,110 @@ def main():
     print(f"  Test:  {len(test_loader.dataset)} images, {len(test_loader)} batches")
     print()
     
-    # Create model
-    print("Creating model...")
-    print("-" * 80)
+    print("Creating model")
     model = get_model_maskrcnn(num_classes=num_classes, pretrained=True)
     model.to(device)
     
-    # Count parameters
-    total_params = sum(p.numel() for p in model.parameters())
-    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    total_params, trainable_params = count_parameters(model)
     
-    print(f"✓ Model created (Transfer Learning from COCO)")
     print(f"  Total parameters: {total_params:,}")
-    print(f"  Trainable parameters: {trainable_params:,}")
+    print(f"  Trainable parameters (before freezing): {trainable_params:,}")
     print(f"  Model size: ~{total_params * 4 / (1024**2):.1f} MB")
     print()
     
-    # Optimizer
-    optimizer = torch.optim.SGD(
-        model.parameters(),
-        lr=lr,
+
+    print("STAGE 1: Training prediction heads with frozen backbone")
+    
+    freeze_backbone(model)
+    
+    total_params, trainable_params = count_parameters(model)
+    print(f"  Trainable parameters (after freezing): {trainable_params:,}")
+    print(f"  Percentage trainable: {100 * trainable_params / total_params:.1f}%")
+    print()
+    
+    optimizer_stage1 = torch.optim.SGD(
+        filter(lambda p: p.requires_grad, model.parameters()),
+        lr=lr_stage1,
         momentum=0.9,
         weight_decay=0.0005
     )
     
-    # Training
-    print("Starting training on TRAIN set...")
-    print("=" * 80)
-    
-    for epoch in range(1, num_epochs + 1):
-        train_metrics = train_one_epoch(model, train_loader, optimizer, device, epoch)
+    for epoch in range(1, num_epochs_stage1 + 1):
+        train_metrics = train_one_epoch(
+            model, train_loader, optimizer_stage1, device, epoch, stage="Stage 1"
+        )
         
-        print(f"\nEpoch {epoch} Training Metrics:")
-        print(f"  Total Loss:      {train_metrics['loss']:.4f}")
-        print(f"  Classifier Loss: {train_metrics['loss_classifier']:.4f}")
-        print(f"  Box Reg Loss:    {train_metrics['loss_box_reg']:.4f}")
-        print(f"  Mask Loss:       {train_metrics['loss_mask']:.4f}")
-        print(f"  Objectness Loss: {train_metrics['loss_objectness']:.4f}")
-        print(f"  RPN Box Loss:    {train_metrics['loss_rpn_box_reg']:.4f}")
+        print(f"\nStage 1 - Epoch {epoch} Training Metrics:")
+        print(f"  Loss Metrics:")
+        print(f"    Total Loss:      {train_metrics['loss']:.4f}")
+        print(f"    Classifier Loss: {train_metrics['loss_classifier']:.4f}")
+        print(f"    Box Reg Loss:    {train_metrics['loss_box_reg']:.4f}")
+        print(f"    Mask Loss:       {train_metrics['loss_mask']:.4f}")
+        print(f"    Objectness Loss: {train_metrics['loss_objectness']:.4f}")
+        print(f"    RPN Box Loss:    {train_metrics['loss_rpn_box_reg']:.4f}")
+        print(f"  Training Dynamics:")
+        print(f"    Gradient Norm:         {train_metrics['gradient_norm']:.4f} ± {train_metrics['gradient_norm_std']:.4f}")
+        print(f"    Avg Preds per Image:   {train_metrics['avg_predictions_per_image']:.2f}")
+        print(f"    Epoch Time:            {train_metrics['epoch_time_seconds']:.2f} seconds")
         print()
     
-    print("=" * 80)
-    print("Training completed!")
+
+    print("Evaluating after Stage 1")
+
+    
+    val_metrics_stage1 = evaluate(model, val_loader, device, iou_threshold=0.5)
+    
+    print(f"\nValidation Metrics after Stage 1:")
+    print(f"  Mean IoU:        {val_metrics_stage1['mean_iou']:.4f}")
+    print(f"  Mean Precision:  {val_metrics_stage1['mean_precision']:.4f}")
+    print(f"  Mean Recall:     {val_metrics_stage1['mean_recall']:.4f}")
+    print(f"  F1 Score:        {val_metrics_stage1['f1_score']:.4f}")
     print()
     
-    # Validation
-    print("=" * 80)
-    print("Evaluating on VALIDATION set...")
-    print("-" * 80)
+
+    print("STAGE 2: Fine-tuning entire network (unfrozen backbone)")
+
+    
+    unfreeze_backbone(model)
+    
+    total_params, trainable_params = count_parameters(model)
+    print(f"  Trainable parameters (after unfreezing): {trainable_params:,}")
+    print(f"  Percentage trainable: {100 * trainable_params / total_params:.1f}%")
+    print()
+    
+
+    optimizer_stage2 = torch.optim.SGD(
+        model.parameters(),
+        lr=lr_stage2,
+        momentum=0.9,
+        weight_decay=0.0005
+    )
+    
+    for epoch in range(1, num_epochs_stage2 + 1):
+        train_metrics = train_one_epoch(
+            model, train_loader, optimizer_stage2, device, epoch, stage="Stage 2"
+        )
+        
+        print(f"\nStage 2 - Epoch {epoch} Training Metrics:")
+        print(f"  Loss Metrics:")
+        print(f"    Total Loss:      {train_metrics['loss']:.4f}")
+        print(f"    Classifier Loss: {train_metrics['loss_classifier']:.4f}")
+        print(f"    Box Reg Loss:    {train_metrics['loss_box_reg']:.4f}")
+        print(f"    Mask Loss:       {train_metrics['loss_mask']:.4f}")
+        print(f"    Objectness Loss: {train_metrics['loss_objectness']:.4f}")
+        print(f"    RPN Box Loss:    {train_metrics['loss_rpn_box_reg']:.4f}")
+        print(f"  Training Dynamics:")
+        print(f"    Gradient Norm:         {train_metrics['gradient_norm']:.4f} ± {train_metrics['gradient_norm_std']:.4f}")
+        print(f"    Avg Preds per Image:   {train_metrics['avg_predictions_per_image']:.2f}")
+        print(f"    Epoch Time:            {train_metrics['epoch_time_seconds']:.2f} seconds")
+        print()
+    
+
+    print("Final Evaluation on VALIDATION set...")
     
     val_metrics = evaluate(model, val_loader, device, iou_threshold=0.5)
     
-    print(f"\nValidation Metrics (IoU threshold: 0.5):")
+    print(f"\nFinal Validation Metrics (IoU threshold: 0.5):")
     print(f"  Mean IoU:        {val_metrics['mean_iou']:.4f}")
     print(f"  Mean Precision:  {val_metrics['mean_precision']:.4f}")
     print(f"  Mean Recall:     {val_metrics['mean_recall']:.4f}")
@@ -457,14 +493,11 @@ def main():
     print(f"  True Positives:  {val_metrics['total_true_positives']}")
     print()
     
-    # Testing
-    print("=" * 80)
-    print("Evaluating on TEST set...")
-    print("-" * 80)
+    print("Final Evaluation on TEST set...")
     
     test_metrics = evaluate(model, test_loader, device, iou_threshold=0.5)
     
-    print(f"\nTest Metrics (IoU threshold: 0.5):")
+    print(f"\nFinal Test Metrics (IoU threshold: 0.5):")
     print(f"  Mean IoU:        {test_metrics['mean_iou']:.4f}")
     print(f"  Mean Precision:  {test_metrics['mean_precision']:.4f}")
     print(f"  Mean Recall:     {test_metrics['mean_recall']:.4f}")
@@ -474,37 +507,35 @@ def main():
     print(f"  True Positives:  {test_metrics['total_true_positives']}")
     print()
     
-    # Save model
+
     os.makedirs('models', exist_ok=True)
-    model_path = 'models/maskrcnn_resnet50_1epoch.pth'
+    model_path = 'models/maskrcnn_resnet50_two_stage.pth'
     torch.save(model.state_dict(), model_path)
     print(f"✓ Model saved to {model_path}")
     print()
-    
-    # Predictions on TEST set
-    print("=" * 80)
-    print("Generating predictions on TEST set...")
-    print("-" * 80)
+
+    print("Generating predictions on TEST set")
     
     test_results = predict(model, test_loader, device, num_samples=5)
     
     print(f"✓ Generated {len(test_results)} predictions")
     print()
     
-    # Visualize
-    print("Visualizing test predictions...")
     print("-" * 80)
-    visualize_predictions(test_results, save_dir='outputs', dataset_name='test')
+    visualize_predictions(test_results, save_dir='outputs', dataset_name='test_two_stage')
     
-    print("=" * 80)
-    print("✓ All done!")
-    print("=" * 80)
-    print(f"\nResults:")
-    print(f"  Model:              models/maskrcnn_resnet50_1epoch.pth")
-    print(f"  Visualizations:     outputs/test_prediction_*.png")
-    print(f"  Val Mean IoU:       {val_metrics['mean_iou']:.4f}")
-    print(f"  Test Mean IoU:      {test_metrics['mean_iou']:.4f}")
-    print(f"  Test F1 Score:      {test_metrics['f1_score']:.4f}")
+
+    print(f"\nResults Summary:")
+    print(f"  Model:                    models/maskrcnn_resnet50_two_stage.pth")
+    print(f"  Visualizations:           outputs/test_two_stage_prediction_*.png")
+    print(f"\n  After Stage 1 (frozen):")
+    print(f"    Val Mean IoU:           {val_metrics_stage1['mean_iou']:.4f}")
+    print(f"    Val F1 Score:           {val_metrics_stage1['f1_score']:.4f}")
+    print(f"\n  After Stage 2 (fine-tuned):")
+    print(f"    Val Mean IoU:           {val_metrics['mean_iou']:.4f}")
+    print(f"    Val F1 Score:           {val_metrics['f1_score']:.4f}")
+    print(f"    Test Mean IoU:          {test_metrics['mean_iou']:.4f}")
+    print(f"    Test F1 Score:          {test_metrics['f1_score']:.4f}")
 
 
 if __name__ == "__main__":
