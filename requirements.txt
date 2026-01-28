@@ -36,4 +36,3 @@ dvc[gdrive]==3.58.0
 pathspec==0.11.2
 
 gradio
-grad-cam
