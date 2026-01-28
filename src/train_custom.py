@@ -1,11 +1,3 @@
-"""
-COMPLETE TRAINING SCRIPT WITH W&B AND TRAINING DYNAMICS
-Training Dynamics Metrics:
-1. Learning Rate - tracks how optimizer adjusts over time
-2. Memory Usage - GPU memory consumption
-3. Gradient Norm - magnitude of gradients (indicates training health)
-"""
-
 import os
 import sys
 import torch
@@ -18,45 +10,23 @@ import argparse
 import wandb
 from dotenv import load_dotenv
 
-# Load environment variables for W&B
 load_dotenv()
 
-# Import custom model and dataset
 sys.path.append('src')
 from custom_maskrcnn import get_custom_model, count_parameters
 from dataset import get_dataloaders
 
 
 def train_one_epoch(model, dataloader, optimizer, device, epoch):
-    """
-    Train for one epoch with complete tracking of training dynamics.
-    
-    Training Dynamics Explained:
-    1. LEARNING RATE: How big the parameter update steps are
-       - Tracked from optimizer
-       - Should decrease over time (with scheduler)
-       
-    2. GRADIENT NORM: How "strong" the gradients are
-       - Formula: sqrt(sum of squares of all gradients)
-       - Too high (>100): Exploding gradients - BAD
-       - Too low (<0.001): Vanishing gradients - BAD
-       - Normal range: 0.1 - 10.0
-       
-    3. MEMORY USAGE: GPU memory used during training
-       - Tracked via torch.cuda.max_memory_allocated()
-       - Helps prevent out-of-memory errors
-       - Should be stable across batches
-    """
+    """Train for one epoch with training dynamics tracking."""
     model.train()
     
-    # Loss tracking (RPN regression removed)
     total_loss = 0
     loss_rpn_cls = 0
     loss_box_cls = 0
     loss_box_reg = 0
     loss_mask = 0
     
-    # Training dynamics tracking
     gradient_norms = []
     learning_rates = []
     memory_usages = []
@@ -64,55 +34,42 @@ def train_one_epoch(model, dataloader, optimizer, device, epoch):
     progress_bar = tqdm(dataloader, desc=f"Training Epoch {epoch}")
     
     for batch_idx, (images, targets) in enumerate(progress_bar):
-        # Move to device
         images = torch.stack([img.to(device) for img in images])  
         targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
         
-        # Forward pass
         loss_dict = model(images, targets)
         losses = sum(loss for loss in loss_dict.values())
         
-        # Backward pass
         optimizer.zero_grad()
         losses.backward()
         
-        # TRAINING DYNAMIC 1: GRADIENT NORM
-        # Calculate L2 norm of all gradients
+        # Calculate gradient norm
         total_norm = 0.0
         for p in model.parameters():
             if p.grad is not None:
-                # Get gradient magnitude for this parameter
-                param_norm = p.grad.data.norm(2)  # L2 norm
+                param_norm = p.grad.data.norm(2)
                 total_norm += param_norm.item() ** 2
-        total_norm = total_norm ** 0.5  # Square root of sum of squares
+        total_norm = total_norm ** 0.5
         gradient_norms.append(total_norm)
         
         optimizer.step()
         
-        # TRAINING DYNAMIC 2: LEARNING RATE
-        # Extract from optimizer's parameter groups
         current_lr = optimizer.param_groups[0]['lr']
         learning_rates.append(current_lr)
         
-        # TRAINING DYNAMIC 3: MEMORY USAGE
-        # Monitor GPU memory to prevent OOM
-        # How: Query CUDA for current memory usage
         if torch.cuda.is_available():
             memory_mb = torch.cuda.max_memory_allocated(device) / (1024 ** 2)
             memory_usages.append(memory_mb)
-            # Reset peak memory stats for next iteration
             torch.cuda.reset_peak_memory_stats(device)
         else:
             memory_usages.append(0.0)
         
-        # Track losses (RPN regression removed)
         total_loss += losses.item()
         loss_rpn_cls += loss_dict.get('loss_rpn_cls', torch.tensor(0.0)).item()
         loss_box_cls += loss_dict.get('loss_box_cls', torch.tensor(0.0)).item()
         loss_box_reg += loss_dict.get('loss_box_reg', torch.tensor(0.0)).item()
         loss_mask += loss_dict.get('loss_mask', torch.tensor(0.0)).item()
         
-        # Update progress bar with training dynamics
         progress_bar.set_postfix({
             'loss': losses.item(),
             'avg_loss': total_loss / (batch_idx + 1),
@@ -121,25 +78,22 @@ def train_one_epoch(model, dataloader, optimizer, device, epoch):
             'mem_mb': f'{memory_usages[-1]:.0f}'
         })
         
-        # Free memory
         del images, targets, loss_dict, losses
         torch.cuda.empty_cache()
     
     n = len(dataloader)
     metrics = {
-        # Loss metrics (RPN regression removed)
         'total_loss': total_loss / n,
         'loss_rpn_cls': loss_rpn_cls / n,
         'loss_box_cls': loss_box_cls / n,
         'loss_box_reg': loss_box_reg / n,
         'loss_mask': loss_mask / n,
         
-        # Training dynamics metrics (NON-LOSS)
         'gradient_norm_mean': np.mean(gradient_norms),
         'gradient_norm_max': np.max(gradient_norms),
         'gradient_norm_min': np.min(gradient_norms),
         'gradient_norm_std': np.std(gradient_norms),
-        'learning_rate': learning_rates[-1],  # Final LR of epoch
+        'learning_rate': learning_rates[-1],
         'memory_usage_mean_mb': np.mean(memory_usages),
         'memory_usage_max_mb': np.max(memory_usages),
     }
@@ -226,7 +180,6 @@ def save_training_plot(train_losses, val_metrics, save_path):
     
     fig, axes = plt.subplots(1, 3, figsize=(15, 4))
     
-    # Training loss
     axes[0].plot(epochs, train_losses, 'b-', label='Train Loss')
     axes[0].set_xlabel('Epoch')
     axes[0].set_ylabel('Loss')
@@ -234,7 +187,6 @@ def save_training_plot(train_losses, val_metrics, save_path):
     axes[0].legend()
     axes[0].grid(True)
     
-    # Validation IoU
     axes[1].plot(epochs, val_ious, 'g-', label='Val IoU')
     axes[1].set_xlabel('Epoch')
     axes[1].set_ylabel('IoU')
@@ -242,7 +194,6 @@ def save_training_plot(train_losses, val_metrics, save_path):
     axes[1].legend()
     axes[1].grid(True)
     
-    # Validation F1
     axes[2].plot(epochs, val_f1s, 'r-', label='Val F1')
     axes[2].set_xlabel('Epoch')
     axes[2].set_ylabel('F1 Score')
@@ -254,28 +205,21 @@ def save_training_plot(train_losses, val_metrics, save_path):
     plt.savefig(save_path, dpi=150, bbox_inches='tight')
     plt.close()
     
-    print(f"✓ Training plot saved to {save_path}")
+    print(f"Training plot saved to {save_path}")
 
 
 def main():
     parser = argparse.ArgumentParser(description='Train Custom Mask R-CNN')
-    parser.add_argument('--model', type=str, default='custom',
-                        help='Model type (custom)')
-    parser.add_argument('--batch_size', type=int, default=2,
-                        help='Batch size for training')
-    parser.add_argument('--lr', type=float, default=0.001,
-                        help='Learning rate')
-    parser.add_argument('--num_epochs', type=int, default=5,
-                        help='Number of epochs')
-    parser.add_argument('--use_wandb', action='store_true',
-                        help='Enable W&B logging')
-    parser.add_argument('--wandb_project', type=str, default='livecell-instance-segmentation',
-                        help='W&B project name')
+    parser.add_argument('--model', type=str, default='custom', help='Model type (custom)')
+    parser.add_argument('--batch_size', type=int, default=2, help='Batch size for training')
+    parser.add_argument('--lr', type=float, default=0.001, help='Learning rate')
+    parser.add_argument('--num_epochs', type=int, default=5, help='Number of epochs')
+    parser.add_argument('--use_wandb', action='store_true', help='Enable W&B logging')
+    parser.add_argument('--wandb_project', type=str, default='livecell-instance-segmentation', help='W&B project name')
     args = parser.parse_args()
     
     print(f"Training {args.model.upper()} Model with Training Dynamics Tracking")
     
-    # Configuration
     data_dir = 'data_split'
     num_classes = 2
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -287,7 +231,6 @@ def main():
     print(f"  Epochs: {args.num_epochs}")
     print(f"  W&B logging: {args.use_wandb}")
     
-    # Initialize W&B
     if args.use_wandb:
         wandb.init(
             project=args.wandb_project,
@@ -305,9 +248,8 @@ def main():
                 "dataset": "LIVECell",
             }
         )
-        print("✓ W&B initialized")
+        print("W&B initialized")
     
-    # Load data
     print("\nLoading datasets...")
     dataloaders = get_dataloaders(
         root_dir=data_dir,
@@ -323,12 +265,10 @@ def main():
     print(f"  Val:   {len(val_loader.dataset)} images")
     print(f"  Test:  {len(test_loader.dataset)} images")
     
-    # Create model
     print(f"\nCreating model...")
     model = get_custom_model(num_classes=num_classes)
     model.to(device)
     
-    # Count parameters
     param_info = count_parameters(model)
     
     print(f"\nModel Architecture:")
@@ -338,6 +278,7 @@ def main():
     print(f"    - FPN:               {param_info.get('fpn', 0):,}")
     print(f"    - RPN:               {param_info.get('rpn', 0):,}")
     print(f"    - CBAM Attention:    {param_info.get('cbam', 0):,}")
+    print(f"    - ROI Align:       {param_info.get('roi_align', 0):,}")
     print(f"    - Box Head:          {param_info.get('box_head', 0):,}")
     print(f"    - Mask Head:         {param_info.get('mask_head', 0):,}")
     print(f"  Total custom:          {param_info['custom']:,} ({param_info['custom_percentage']:.1f}%)")
@@ -353,7 +294,6 @@ def main():
             "model_memory_mb": param_info['memory_mb'],
         })
     
-    # Optimizer & Scheduler
     optimizer = torch.optim.AdamW(
         model.parameters(),
         lr=args.lr,
@@ -361,7 +301,6 @@ def main():
     )
     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=2, gamma=0.1)
     
-    # Training loop
     print("Starting Training with Training Dynamics Tracking")
     print("\nTracking:")
     print("  1. Learning Rate - optimizer step size")
@@ -372,7 +311,6 @@ def main():
     val_metrics_history = []
     
     for epoch in range(1, args.num_epochs + 1):
-        # Train
         train_metrics = train_one_epoch(model, train_loader, optimizer, device, epoch)
         
         print(f"\nEpoch {epoch} Training:")
@@ -392,24 +330,20 @@ def main():
         
         train_losses.append(train_metrics['total_loss'])
         
-        # Log to W&B (RPN regression removed)
         if args.use_wandb:
             wandb.log({
                 "epoch": epoch,
-                # Losses
                 "train/total_loss": train_metrics['total_loss'],
                 "train/rpn_cls_loss": train_metrics['loss_rpn_cls'],
                 "train/box_cls_loss": train_metrics['loss_box_cls'],
                 "train/box_reg_loss": train_metrics['loss_box_reg'],
                 "train/mask_loss": train_metrics['loss_mask'],
-                # Training Dynamics
                 "dynamics/gradient_norm_mean": train_metrics['gradient_norm_mean'],
                 "dynamics/gradient_norm_max": train_metrics['gradient_norm_max'],
                 "dynamics/learning_rate": train_metrics['learning_rate'],
                 "dynamics/memory_usage_mb": train_metrics['memory_usage_mean_mb'],
             })
         
-        # Validate
         val_metrics = evaluate(model, val_loader, device)
         val_metrics_history.append(val_metrics)
         
@@ -430,7 +364,6 @@ def main():
         
         scheduler.step()
     
-    # Save model
     os.makedirs('models', exist_ok=True)
     model_path = f'models/{args.model}_maskrcnn_{args.num_epochs}epochs.pth'
     
@@ -443,13 +376,11 @@ def main():
         'param_info': param_info,
     }, model_path)
     
-    print(f"\n✓ Model saved to {model_path}")
+    print(f"\nModel saved to {model_path}")
     
-    # Save plot
     plot_path = f'outputs/{args.model}_training_plot.png'
     save_training_plot(train_losses, val_metrics_history, plot_path)
     
-    # Test
     print("\nTesting...")
     test_metrics = evaluate(model, test_loader, device)
     
