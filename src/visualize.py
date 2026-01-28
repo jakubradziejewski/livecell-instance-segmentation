@@ -609,7 +609,7 @@ def main():
     import argparse
     
     parser = argparse.ArgumentParser(description='Mask R-CNN dual model inference with tiled images')
-    parser.add_argument('--model1_path', type=str, default='models/custom_maskrcnn_5epochs.pth',
+    parser.add_argument('--model1_path', type=str, default='models/custom_maskrcnn_10epochs.pth',
                         help='Path to first model .pth file')
     parser.add_argument('--model1_type', type=str, default='custom', choices=['custom', 'maskrcnn'],
                         help='Type of first model (custom or maskrcnn)')

@@ -15,7 +15,8 @@ services:
       - wandb-cache:/root/.cache/wandb
     runtime: nvidia
     ports:
-      - "8080:8080" 
+        - "8080:8080"   # DVC
+        - "7860:7860"   # Gradio
     env_file:
       - .env
     
