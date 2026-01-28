@@ -411,11 +411,6 @@ class ComprehensivePredictionExplainer:
 def main():
     """Generate comprehensive pipeline explanations for 3 predictions."""
     
-    print("="*80)
-    print("GENERATING COMPREHENSIVE PIPELINE EXPLANATIONS")
-    print("Backbone → CBAM → FPN → RPN → ROI → Box/Mask Heads")
-    print("="*80)
-    
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     data_dir = 'data_split'
     model_path = 'models/custom_maskrcnn_10epochs.pth'

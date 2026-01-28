@@ -218,7 +218,7 @@ def main():
     parser.add_argument('--wandb_project', type=str, default='livecell-instance-segmentation', help='W&B project name')
     args = parser.parse_args()
     
-    print(f"Training {args.model.upper()} Model with Training Dynamics Tracking")
+    print(f"Training {args.model.upper()} Model")
     
     data_dir = 'data_split'
     num_classes = 2
@@ -301,11 +301,6 @@ def main():
     )
     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=2, gamma=0.1)
     
-    print("Starting Training with Training Dynamics Tracking")
-    print("\nTracking:")
-    print("  1. Learning Rate - optimizer step size")
-    print("  2. Memory Usage - GPU memory consumption")
-    print("  3. Gradient Norm - gradient magnitude")
     
     train_losses = []
     val_metrics_history = []
@@ -399,10 +394,7 @@ def main():
         })
         wandb.log({"training_plot": wandb.Image(plot_path)})
         wandb.finish()
-    
-    print("\n" + "=" * 80)
-    print("Training Complete!")
-    print("=" * 80)
+
 
 
 if __name__ == "__main__":
