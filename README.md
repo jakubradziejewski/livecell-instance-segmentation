@@ -158,7 +158,7 @@ The preprocessing step tiles large microscopy images into smaller patches for tr
 
 ```bash
 # Inside the container
-python preprocess_dataset.py \
+python src/preprocess_dataset.py \
     --source_dir data \
     --output_dir data_split \
     --num_images_per_split 100
@@ -180,7 +180,7 @@ You can train either a custom Mask R-CNN or use transfer learning:
 #### Option A: Train Custom Mask R-CNN
 
 ```bash
-python train_custom.py
+python src/train_custom.py
 ```
 
 This trains the custom architecture from scratch with:
@@ -191,7 +191,7 @@ This trains the custom architecture from scratch with:
 #### Option B: Transfer Learning (Pretrained Mask R-CNN)
 
 ```bash
-python train_transfer.py
+python src/train_transfer.py
 ```
 
 Fine-tunes a pretrained Mask R-CNN (ResNet-50 backbone) on the LIVECell dataset.
@@ -208,7 +208,7 @@ Fine-tunes a pretrained Mask R-CNN (ResNet-50 backbone) on the LIVECell dataset.
 Generate visualizations of model predictions on test images:
 
 ```bash
-python visualize.py \
+python src/visualize.py \
     --model_path models/custom_model.pth \
     --model_type custom \
     --data_dir data_split \
@@ -232,7 +232,7 @@ python visualize.py \
 Launch a web-based interface for real-time inference:
 
 ```bash
-python app_gradio.py
+python src/app_gradio.py
 ```
 
 **Access the interface:**
@@ -254,7 +254,7 @@ python app_gradio.py
 Generate interpretability visualizations using GradCAM:
 
 ```bash
-python explain_predictions.py \
+python src/explain_predictions.py \
     --model_path models/custom_model.pth \
     --model_type custom \
     --data_dir data_split \
